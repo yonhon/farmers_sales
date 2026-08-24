@@ -1,0 +1,297 @@
+import { useEffect, useMemo, useState } from 'react'
+import { format, parseISO } from 'date-fns'
+import { ja } from 'date-fns/locale'
+import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+
+import { aggregateProducts, filterByDate, summarizeSales } from '../lib/analytics'
+import { supabase } from '../lib/supabase'
+import type { DailyProductSalesRow, DailySalesRow } from '../types'
+
+const PAGE_SIZE = 1_000
+const yen = new Intl.NumberFormat('ja-JP', {
+  style: 'currency',
+  currency: 'JPY',
+  maximumFractionDigits: 0,
+})
+const integer = new Intl.NumberFormat('ja-JP')
+
+async function fetchAllRows<T>(
+  table: 'daily_sales_summary' | 'daily_product_sales',
+): Promise<T[]> {
+  if (!supabase) return []
+
+  const rows: T[] = []
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await supabase
+      .schema('analytics')
+      .from(table)
+      .select('*')
+      .order('report_date', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1)
+
+    if (error) throw error
+    const page = (data ?? []) as T[]
+    rows.push(...page)
+    if (page.length < PAGE_SIZE) break
+  }
+  return rows
+}
+
+function formatShortDate(value: string) {
+  return format(parseISO(value), 'M/d', { locale: ja })
+}
+
+type DashboardProps = {
+  userEmail: string
+  onSignOut: () => Promise<void>
+}
+
+export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
+  const [dailyRows, setDailyRows] = useState<DailySalesRow[]>([])
+  const [productRows, setProductRows] = useState<DailyProductSalesRow[]>([])
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [isLoading, setIsLoading] = useState(true)
+  const [errorMessage, setErrorMessage] = useState('')
+
+  useEffect(() => {
+    let active = true
+
+    async function loadDashboard() {
+      setIsLoading(true)
+      setErrorMessage('')
+      try {
+        const [daily, products] = await Promise.all([
+          fetchAllRows<DailySalesRow>('daily_sales_summary'),
+          fetchAllRows<DailyProductSalesRow>('daily_product_sales'),
+        ])
+        if (!active) return
+        setDailyRows(daily)
+        setProductRows(products)
+        if (daily.length) {
+          setStartDate(daily[0].report_date)
+          setEndDate(daily[daily.length - 1].report_date)
+        }
+      } catch (error) {
+        if (!active) return
+        console.error(error)
+        setErrorMessage(
+          '集計データを取得できませんでした。analyticsスキーマのData API設定とRLSを確認してください。',
+        )
+      } finally {
+        if (active) setIsLoading(false)
+      }
+    }
+
+    void loadDashboard()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const filteredDaily = useMemo(
+    () => filterByDate(dailyRows, startDate, endDate),
+    [dailyRows, startDate, endDate],
+  )
+  const filteredProducts = useMemo(
+    () => filterByDate(productRows, startDate, endDate),
+    [productRows, startDate, endDate],
+  )
+  const summary = useMemo(() => summarizeSales(filteredDaily), [filteredDaily])
+  const productSummary = useMemo(
+    () => aggregateProducts(filteredProducts),
+    [filteredProducts],
+  )
+  const topProducts = productSummary.slice(0, 10)
+  const marketName = dailyRows[0]?.market_name ?? 'やんばる市場'
+
+  return (
+    <div className="app-shell">
+      <header className="app-header">
+        <div className="brand-lockup">
+          <span className="brand-icon" aria-hidden="true">芽</span>
+          <div>
+            <p>NODAI FARMERS MARKET</p>
+            <strong>Sales Dashboard</strong>
+          </div>
+        </div>
+        <div className="user-actions">
+          <span>{userEmail}</span>
+          <button className="text-button" type="button" onClick={() => void onSignOut()}>
+            ログアウト
+          </button>
+        </div>
+      </header>
+
+      <main className="dashboard-main">
+        <section className="dashboard-heading">
+          <div>
+            <p className="eyebrow">{marketName}</p>
+            <h1>販売のいまを、次の出荷へ。</h1>
+            <p className="muted">日々の販売量と売上を、商品ごとに見渡せます。</p>
+          </div>
+          <div className="date-filter" aria-label="表示期間">
+            <label>
+              開始日
+              <input
+                type="date"
+                value={startDate}
+                min={dailyRows[0]?.report_date}
+                max={endDate || undefined}
+                onChange={(event) => setStartDate(event.target.value)}
+              />
+            </label>
+            <span aria-hidden="true">—</span>
+            <label>
+              終了日
+              <input
+                type="date"
+                value={endDate}
+                min={startDate || undefined}
+                max={dailyRows[dailyRows.length - 1]?.report_date}
+                onChange={(event) => setEndDate(event.target.value)}
+              />
+            </label>
+          </div>
+        </section>
+
+        {isLoading && <div className="status-panel">集計データを読み込んでいます…</div>}
+        {errorMessage && <div className="status-panel error" role="alert">{errorMessage}</div>}
+
+        {!isLoading && !errorMessage && (
+          <>
+            <section className="metric-grid" aria-label="販売サマリー">
+              <article className="metric-card accent">
+                <p>純売上</p>
+                <strong>{yen.format(summary.netSalesYen)}</strong>
+                <span>{summary.reportDays}日分の集計</span>
+              </article>
+              <article className="metric-card">
+                <p>販売個数</p>
+                <strong>{integer.format(summary.soldQuantity)}</strong>
+                <span>平均 {integer.format(summary.averageUnitRevenueYen)}円／個</span>
+              </article>
+              <article className="metric-card">
+                <p>値引額</p>
+                <strong>{yen.format(summary.discountAmountYen)}</strong>
+                <span>粗売上 {yen.format(summary.grossSalesYen)}</span>
+              </article>
+              <article className="metric-card">
+                <p>取扱商品</p>
+                <strong>{integer.format(productSummary.length)}</strong>
+                <span>期間内の商品数</span>
+              </article>
+            </section>
+
+            <section className="chart-grid">
+              <article className="panel wide">
+                <div className="panel-heading">
+                  <div>
+                    <p className="section-kicker">DAILY TREND</p>
+                    <h2>日別純売上</h2>
+                  </div>
+                  <span className="legend"><i /> 純売上</span>
+                </div>
+                <div className="chart-wrap">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={filteredDaily} margin={{ top: 16, right: 12, left: 8, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="salesFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#4d8b65" stopOpacity={0.42} />
+                          <stop offset="100%" stopColor="#4d8b65" stopOpacity={0.02} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke="#dfe4da" strokeDasharray="3 5" vertical={false} />
+                      <XAxis dataKey="report_date" tickFormatter={formatShortDate} minTickGap={28} />
+                      <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} width={42} />
+                      <Tooltip
+                        labelFormatter={(value) => format(parseISO(String(value)), 'yyyy年M月d日', { locale: ja })}
+                        formatter={(value) => [yen.format(Number(value)), '純売上']}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="net_sales_yen"
+                        stroke="#2f6b4c"
+                        strokeWidth={2.5}
+                        fill="url(#salesFill)"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </article>
+
+              <article className="panel">
+                <div className="panel-heading">
+                  <div>
+                    <p className="section-kicker">TOP PRODUCTS</p>
+                    <h2>商品別売上</h2>
+                  </div>
+                </div>
+                <div className="chart-wrap compact">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={topProducts} layout="vertical" margin={{ top: 4, right: 12, left: 18, bottom: 0 }}>
+                      <CartesianGrid stroke="#e6e9e2" strokeDasharray="3 5" horizontal={false} />
+                      <XAxis type="number" hide />
+                      <YAxis
+                        type="category"
+                        dataKey="canonicalName"
+                        width={112}
+                        tick={{ fontSize: 12 }}
+                      />
+                      <Tooltip formatter={(value) => [yen.format(Number(value)), '純売上']} />
+                      <Bar dataKey="netSalesYen" fill="#d29345" radius={[0, 5, 5, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </article>
+            </section>
+
+            <section className="panel table-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="section-kicker">PRODUCT DETAIL</p>
+                  <h2>商品別集計</h2>
+                </div>
+                <span className="record-count">{productSummary.length}商品</span>
+              </div>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>商品名</th>
+                      <th>販売個数</th>
+                      <th>粗売上</th>
+                      <th>値引額</th>
+                      <th>純売上</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productSummary.map((product) => (
+                      <tr key={product.productId}>
+                        <td>{product.canonicalName}</td>
+                        <td>{integer.format(product.soldQuantity)}</td>
+                        <td>{yen.format(product.grossSalesYen)}</td>
+                        <td>{yen.format(product.discountAmountYen)}</td>
+                        <td><strong>{yen.format(product.netSalesYen)}</strong></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
+        )}
+      </main>
+    </div>
+  )
+}
