@@ -16,6 +16,7 @@ import {
 import { aggregateProducts, filterByDate, summarizeSales } from '../lib/analytics'
 import { supabase } from '../lib/supabase'
 import type { DailyProductSalesRow, DailySalesRow } from '../types'
+import { ProductDetail } from './ProductDetail'
 
 const PAGE_SIZE = 1_000
 const yen = new Intl.NumberFormat('ja-JP', {
@@ -51,18 +52,58 @@ function formatShortDate(value: string) {
   return format(parseISO(value), 'M/d', { locale: ja })
 }
 
+type HashRoute = {
+  productId: string | null
+  startDate: string
+  endDate: string
+}
+
+function readHashRoute(): HashRoute {
+  const [path, query = ''] = (window.location.hash.slice(1) || '/').split('?')
+  const match = path.match(/^\/products\/([^/]+)$/)
+  const params = new URLSearchParams(query)
+  return {
+    productId: match ? decodeURIComponent(match[1]) : null,
+    startDate: params.get('from') ?? '',
+    endDate: params.get('to') ?? '',
+  }
+}
+
+function buildHashHref(productId: string | null, startDate: string, endDate: string) {
+  const params = new URLSearchParams()
+  if (startDate) params.set('from', startDate)
+  if (endDate) params.set('to', endDate)
+  const path = productId ? `/products/${encodeURIComponent(productId)}` : '/'
+  const query = params.toString()
+  return `#${path}${query ? `?${query}` : ''}`
+}
+
 type DashboardProps = {
   userEmail: string
   onSignOut: () => Promise<void>
 }
 
 export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
+  const initialRoute = readHashRoute()
   const [dailyRows, setDailyRows] = useState<DailySalesRow[]>([])
   const [productRows, setProductRows] = useState<DailyProductSalesRow[]>([])
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(initialRoute.productId)
+  const [startDate, setStartDate] = useState(initialRoute.startDate)
+  const [endDate, setEndDate] = useState(initialRoute.endDate)
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
+
+  useEffect(() => {
+    function syncRoute() {
+      const route = readHashRoute()
+      setSelectedProductId(route.productId)
+      if (route.startDate) setStartDate(route.startDate)
+      if (route.endDate) setEndDate(route.endDate)
+    }
+
+    window.addEventListener('hashchange', syncRoute)
+    return () => window.removeEventListener('hashchange', syncRoute)
+  }, [])
 
   useEffect(() => {
     let active = true
@@ -79,8 +120,8 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
         setDailyRows(daily)
         setProductRows(products)
         if (daily.length) {
-          setStartDate(daily[0].report_date)
-          setEndDate(daily[daily.length - 1].report_date)
+          setStartDate((current) => current || daily[0].report_date)
+          setEndDate((current) => current || daily[daily.length - 1].report_date)
         }
       } catch (error) {
         if (!active) return
@@ -114,6 +155,20 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
   )
   const topProducts = productSummary.slice(0, 10)
   const marketName = dailyRows[0]?.market_name ?? 'やんばる市場'
+  const selectedProductName = productRows.find(
+    (row) => row.product_id === selectedProductId,
+  )?.canonical_name ?? '商品'
+  const dashboardHref = buildHashHref(null, startDate, endDate)
+
+  function updateDateRange(nextStartDate: string, nextEndDate: string) {
+    setStartDate(nextStartDate)
+    setEndDate(nextEndDate)
+    window.history.replaceState(
+      null,
+      '',
+      buildHashHref(selectedProductId, nextStartDate, nextEndDate),
+    )
+  }
 
   return (
     <div className="app-shell">
@@ -137,8 +192,12 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
         <section className="dashboard-heading">
           <div>
             <p className="eyebrow">{marketName}</p>
-            <h1>販売のいまを、次の出荷へ。</h1>
-            <p className="muted">日々の販売量と売上を、商品ごとに見渡せます。</p>
+            <h1>{selectedProductId ? `${selectedProductName}の販売分析` : '販売のいまを、次の出荷へ。'}</h1>
+            <p className="muted">
+              {selectedProductId
+                ? '販売実績の推移と曜日傾向を、選択した期間で確認できます。'
+                : '日々の販売量と売上を、商品ごとに見渡せます。'}
+            </p>
           </div>
           <div className="date-filter" aria-label="表示期間">
             <label>
@@ -148,7 +207,7 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
                 value={startDate}
                 min={dailyRows[0]?.report_date}
                 max={endDate || undefined}
-                onChange={(event) => setStartDate(event.target.value)}
+                onChange={(event) => updateDateRange(event.target.value, endDate)}
               />
             </label>
             <span aria-hidden="true">—</span>
@@ -159,7 +218,7 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
                 value={endDate}
                 min={startDate || undefined}
                 max={dailyRows[dailyRows.length - 1]?.report_date}
-                onChange={(event) => setEndDate(event.target.value)}
+                onChange={(event) => updateDateRange(startDate, event.target.value)}
               />
             </label>
           </div>
@@ -169,6 +228,17 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
         {errorMessage && <div className="status-panel error" role="alert">{errorMessage}</div>}
 
         {!isLoading && !errorMessage && (
+          selectedProductId ? (
+            <ProductDetail
+              productId={selectedProductId}
+              productName={selectedProductName}
+              startDate={startDate}
+              endDate={endDate}
+              productSummaries={productSummary}
+              totalNetSalesYen={summary.netSalesYen}
+              dashboardHref={dashboardHref}
+            />
+          ) : (
           <>
             <section className="metric-grid" aria-label="販売サマリー">
               <article className="metric-card accent">
@@ -278,7 +348,14 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
                   <tbody>
                     {productSummary.map((product) => (
                       <tr key={product.productId}>
-                        <td>{product.canonicalName}</td>
+                        <td>
+                          <a
+                            className="product-link"
+                            href={buildHashHref(product.productId, startDate, endDate)}
+                          >
+                            {product.canonicalName}
+                          </a>
+                        </td>
                         <td>{integer.format(product.soldQuantity)}</td>
                         <td>{yen.format(product.grossSalesYen)}</td>
                         <td>{yen.format(product.discountAmountYen)}</td>
@@ -290,6 +367,7 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
               </div>
             </section>
           </>
+          )
         )}
       </main>
     </div>

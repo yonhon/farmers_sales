@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { aggregateProducts, filterByDate, summarizeSales } from './analytics'
+import {
+  aggregateProducts,
+  aggregateWeekdays,
+  calculateChangeRate,
+  filterByDate,
+  summarizeProduct,
+  summarizeSales,
+} from './analytics'
 import type { DailyProductSalesRow, DailySalesRow } from '../types'
 
 const dailyRows: DailySalesRow[] = [
@@ -83,5 +90,80 @@ describe('analytics helpers', () => {
       netSalesYen: 900,
     })
     expect(result[1].canonicalName).toBe('オクラ')
+  })
+
+  it('summarizes one product and calculates realized unit revenue', () => {
+    const rows: DailyProductSalesRow[] = [
+      {
+        report_date: '2026-04-09',
+        market_id: 'market-1',
+        product_id: 'product-a',
+        canonical_name: 'トマト',
+        sold_quantity: 2,
+        gross_sales_yen: 700,
+        discount_amount_yen: 100,
+        net_sales_yen: 600,
+      },
+      {
+        report_date: '2026-04-10',
+        market_id: 'market-1',
+        product_id: 'product-a',
+        canonical_name: 'トマト',
+        sold_quantity: 1,
+        gross_sales_yen: 300,
+        discount_amount_yen: 0,
+        net_sales_yen: 300,
+      },
+    ]
+
+    expect(summarizeProduct(rows)).toEqual({
+      sellingDays: 2,
+      soldQuantity: 3,
+      grossSalesYen: 1_000,
+      discountAmountYen: 100,
+      netSalesYen: 900,
+      averageUnitRevenueYen: 300,
+      averageSoldPerSellingDay: 1.5,
+      discountRate: 0.1,
+    })
+  })
+
+  it('aggregates weekday averages using selling days only', () => {
+    const rows: DailyProductSalesRow[] = [
+      {
+        report_date: '2026-04-09',
+        market_id: 'market-1',
+        product_id: 'product-a',
+        canonical_name: 'トマト',
+        sold_quantity: 2,
+        gross_sales_yen: 600,
+        discount_amount_yen: 0,
+        net_sales_yen: 600,
+      },
+      {
+        report_date: '2026-04-16',
+        market_id: 'market-1',
+        product_id: 'product-a',
+        canonical_name: 'トマト',
+        sold_quantity: 4,
+        gross_sales_yen: 1_200,
+        discount_amount_yen: 0,
+        net_sales_yen: 1_200,
+      },
+    ]
+
+    expect(aggregateWeekdays(rows)).toEqual([
+      expect.objectContaining({
+        weekdayLabel: '木曜',
+        sellingDays: 2,
+        averageSoldQuantity: 3,
+        averageNetSalesYen: 900,
+      }),
+    ])
+  })
+
+  it('returns null when a previous-period change cannot be calculated', () => {
+    expect(calculateChangeRate(120, 100)).toBeCloseTo(0.2)
+    expect(calculateChangeRate(120, 0)).toBeNull()
   })
 })

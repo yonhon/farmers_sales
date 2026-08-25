@@ -37,3 +37,24 @@ export type SalesSummary = {
   netSalesYen: number
   averageUnitRevenueYen: number
 }
+
+export type ProductAnalysisSummary = {
+  sellingDays: number
+  soldQuantity: number
+  grossSalesYen: number
+  discountAmountYen: number
+  netSalesYen: number
+  averageUnitRevenueYen: number
+  averageSoldPerSellingDay: number
+  discountRate: number
+}
+
+export type WeekdaySummary = {
+  weekdayIndex: number
+  weekdayLabel: string
+  sellingDays: number
+  soldQuantity: number
+  netSalesYen: number
+  averageSoldQuantity: number
+  averageNetSalesYen: number
+}
