@@ -220,13 +220,13 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="brand-lockup">
-          <span className="brand-icon" aria-hidden="true">芽</span>
+        <a className="brand-lockup" href={dashboardHref} aria-label="全体の販売状況へ戻る">
+          <span className="brand-icon" aria-hidden="true">農</span>
           <div>
             <p>NODAI FARMERS MARKET</p>
             <strong>Sales Dashboard</strong>
           </div>
-        </div>
+        </a>
         <div className="user-actions">
           {appRole === 'admin' || appRole === 'inputter' ? (
             <a className="header-link" href={isImportRoute ? dashboardHref : '#/sales/import'}>

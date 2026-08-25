@@ -147,7 +147,8 @@ button { cursor: pointer; }
   color: white;
   background: var(--forest);
 }
-.brand-lockup { display: flex; align-items: center; gap: 12px; }
+.brand-lockup { display: flex; align-items: center; gap: 12px; color: inherit; text-decoration: none; }
+.brand-lockup:focus-visible { outline: 2px solid #d8b06c; outline-offset: 5px; border-radius: 4px; }
 .brand-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50% 50% 50% 12px; color: var(--forest); background: #d8b06c; font-weight: 700; transform: rotate(-6deg); }
 .brand-lockup p { margin: 0 0 2px; color: #c8d8ce; font-size: 0.58rem; letter-spacing: 0.14em; }
 .brand-lockup strong { font-family: 'Shippori Mincho', serif; font-size: 1rem; }
