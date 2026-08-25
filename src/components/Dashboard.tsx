@@ -147,7 +147,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
         if (!active) return
         console.error(error)
         setErrorMessage(
-          '集計データを取得できませんでした。analyticsスキーマのData API設定とRLSを確認してください。',
+          '集計データを取得できませんでした。analyticsスキーマのData API設定とRLSを確認してください。ブラウザをリロードしてみてください。',
         )
       } finally {
         if (active) setIsLoading(false)
