@@ -23,10 +23,12 @@ npm run dev
 
 ## Supabase
 
-非公開リポジトリ側のマイグレーションとseedを適用した後、Data APIのExposed schemasへ`analytics`を追加します。画面は次の読み取り専用ビューだけを参照します。
+非公開リポジトリ側のマイグレーションとseedを適用した後、Data APIのExposed schemasへ`analytics`を追加します。ダッシュボードは次の集計ビューを参照します。
 
 - `analytics.daily_sales_summary`
 - `analytics.daily_product_sales`
+
+`admin`または`inputter`には「データ登録」が表示されます。対象年を選択して売上状況を貼り付けると、合計と商品対応を確認した後、`public.import_sales_blocks` RPCでトランザクション登録します。ブラウザからSecret Keyや`service_role`は使用しません。
 
 ## GitHub Pages
 

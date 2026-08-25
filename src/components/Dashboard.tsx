@@ -17,6 +17,7 @@ import { aggregateProducts, filterByDate, summarizeSales } from '../lib/analytic
 import { supabase } from '../lib/supabase'
 import type { DailyProductSalesRow, DailySalesRow } from '../types'
 import { ProductDetail } from './ProductDetail'
+import { SalesImport } from './SalesImport'
 
 const PAGE_SIZE = 1_000
 const yen = new Intl.NumberFormat('ja-JP', {
@@ -54,6 +55,7 @@ function formatShortDate(value: string) {
 
 type HashRoute = {
   productId: string | null
+  isImport: boolean
   startDate: string
   endDate: string
 }
@@ -64,6 +66,7 @@ function readHashRoute(): HashRoute {
   const params = new URLSearchParams(query)
   return {
     productId: match ? decodeURIComponent(match[1]) : null,
+    isImport: path === '/sales/import',
     startDate: params.get('from') ?? '',
     endDate: params.get('to') ?? '',
   }
@@ -79,17 +82,21 @@ function buildHashHref(productId: string | null, startDate: string, endDate: str
 }
 
 type DashboardProps = {
+  userId: string
   userEmail: string
   onSignOut: () => Promise<void>
 }
 
-export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
+export function Dashboard({ userId, userEmail, onSignOut }: DashboardProps) {
   const initialRoute = readHashRoute()
   const [dailyRows, setDailyRows] = useState<DailySalesRow[]>([])
   const [productRows, setProductRows] = useState<DailyProductSalesRow[]>([])
   const [selectedProductId, setSelectedProductId] = useState<string | null>(initialRoute.productId)
+  const [isImportRoute, setIsImportRoute] = useState(initialRoute.isImport)
   const [startDate, setStartDate] = useState(initialRoute.startDate)
   const [endDate, setEndDate] = useState(initialRoute.endDate)
+  const [appRole, setAppRole] = useState('viewer')
+  const [refreshKey, setRefreshKey] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
 
@@ -97,6 +104,7 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
     function syncRoute() {
       const route = readHashRoute()
       setSelectedProductId(route.productId)
+      setIsImportRoute(route.isImport)
       if (route.startDate) setStartDate(route.startDate)
       if (route.endDate) setEndDate(route.endDate)
     }
@@ -112,13 +120,17 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
       setIsLoading(true)
       setErrorMessage('')
       try {
-        const [daily, products] = await Promise.all([
+        if (!supabase) return
+        const [daily, products, roleResponse] = await Promise.all([
           fetchAllRows<DailySalesRow>('daily_sales_summary'),
           fetchAllRows<DailyProductSalesRow>('daily_product_sales'),
+          supabase.from('app_users').select('app_role').eq('user_id', userId).single(),
         ])
+        if (roleResponse.error) throw roleResponse.error
         if (!active) return
         setDailyRows(daily)
         setProductRows(products)
+        setAppRole(String(roleResponse.data.app_role))
         if (daily.length) {
           setStartDate((current) => current || daily[0].report_date)
           setEndDate((current) => current || daily[daily.length - 1].report_date)
@@ -138,7 +150,7 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
     return () => {
       active = false
     }
-  }, [])
+  }, [refreshKey, userId])
 
   const filteredDaily = useMemo(
     () => filterByDate(dailyRows, startDate, endDate),
@@ -181,6 +193,11 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
           </div>
         </div>
         <div className="user-actions">
+          {appRole === 'admin' || appRole === 'inputter' ? (
+            <a className="header-link" href={isImportRoute ? dashboardHref : '#/sales/import'}>
+              {isImportRoute ? 'ダッシュボード' : 'データ登録'}
+            </a>
+          ) : null}
           <span>{userEmail}</span>
           <button className="text-button" type="button" onClick={() => void onSignOut()}>
             ログアウト
@@ -191,15 +208,21 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
       <main className="dashboard-main">
         <section className="dashboard-heading">
           <div>
-            <p className="eyebrow">{marketName}</p>
-            <h1>{selectedProductId ? `${selectedProductName}の販売分析` : '販売のいまを、次の出荷へ。'}</h1>
+            <p className="eyebrow">{isImportRoute ? 'DATA IMPORT' : marketName}</p>
+            <h1>
+              {isImportRoute
+                ? '売上状況を一括登録'
+                : selectedProductId ? `${selectedProductName}の販売分析` : '販売のいまを、次の出荷へ。'}
+            </h1>
             <p className="muted">
-              {selectedProductId
+              {isImportRoute
+                ? '対象年を選び、複数日分の売上状況をそのまま貼り付けてください。'
+                : selectedProductId
                 ? '販売実績の推移と曜日傾向を、選択した期間で確認できます。'
                 : '日々の販売量と売上を、商品ごとに見渡せます。'}
             </p>
           </div>
-          <div className="date-filter" aria-label="表示期間">
+          {!isImportRoute && <div className="date-filter" aria-label="表示期間">
             <label>
               開始日
               <input
@@ -221,14 +244,23 @@ export function Dashboard({ userEmail, onSignOut }: DashboardProps) {
                 onChange={(event) => updateDateRange(startDate, event.target.value)}
               />
             </label>
-          </div>
+          </div>}
         </section>
 
         {isLoading && <div className="status-panel">集計データを読み込んでいます…</div>}
         {errorMessage && <div className="status-panel error" role="alert">{errorMessage}</div>}
 
         {!isLoading && !errorMessage && (
-          selectedProductId ? (
+          isImportRoute ? (
+            <SalesImport
+              appRole={appRole}
+              onImported={(firstDate, lastDate) => {
+                setStartDate(firstDate)
+                setEndDate(lastDate)
+                setRefreshKey((current) => current + 1)
+              }}
+            />
+          ) : selectedProductId ? (
             <ProductDetail
               productId={selectedProductId}
               productName={selectedProductName}
