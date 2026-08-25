@@ -7,13 +7,16 @@ import {
 } from 'date-fns'
 import { ja } from 'date-fns/locale'
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
   LabelList,
-  Line,
-  LineChart,
+  ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
@@ -41,6 +44,7 @@ const percent = new Intl.NumberFormat('ja-JP', {
   style: 'percent',
   maximumFractionDigits: 1,
 })
+const DAY_MILLISECONDS = 24 * 60 * 60 * 1_000
 
 type ProductDetailProps = {
   productId: string
@@ -92,6 +96,51 @@ function formatChange(value: number | null) {
   if (value === null) return '比較不可'
   const sign = value > 0 ? '+' : ''
   return `${sign}${percent.format(value)}`
+}
+
+type PricePoint = {
+  report_date: string
+  timestamp: number
+  average_unit_revenue_yen: number
+}
+
+type PriceMarkerProps = {
+  cx?: number
+  cy?: number
+  active?: boolean
+}
+
+function PriceMarker({ cx = 0, cy = 0, active = false }: PriceMarkerProps) {
+  const width = active ? 28 : 20
+  const height = active ? 8 : 6
+  return (
+    <rect
+      x={cx - width / 2}
+      y={cy - height / 2}
+      width={width}
+      height={height}
+      rx={height / 2}
+      fill={active ? '#d29345' : '#375f4c'}
+      stroke="#fffdf7"
+      strokeWidth={2}
+    />
+  )
+}
+
+type PriceTooltipProps = {
+  active?: boolean
+  payload?: Array<{ payload?: PricePoint }>
+}
+
+function PriceTooltip({ active, payload }: PriceTooltipProps) {
+  const point = payload?.[0]?.payload
+  if (!active || !point) return null
+  return (
+    <div className="price-tooltip">
+      <span>{formatLongDate(point.report_date)}</span>
+      <strong>{yen.format(point.average_unit_revenue_yen)}</strong>
+    </div>
+  )
 }
 
 export function ProductDetail({
@@ -160,11 +209,21 @@ export function ProductDetail({
     () => buildProductDailySeries(currentRows, reportDates),
     [currentRows, reportDates],
   )
-  const priceValues = useMemo(
+  const priceChartRows = useMemo<PricePoint[]>(
     () => chartRows.flatMap((row) => (
-      row.average_unit_revenue_yen === null ? [] : [row.average_unit_revenue_yen]
+      row.average_unit_revenue_yen === null
+        ? []
+        : [{
+            report_date: row.report_date,
+            timestamp: parseISO(row.report_date).getTime(),
+            average_unit_revenue_yen: row.average_unit_revenue_yen,
+          }]
     )),
     [chartRows],
+  )
+  const priceValues = useMemo(
+    () => priceChartRows.map((row) => row.average_unit_revenue_yen),
+    [priceChartRows],
   )
   const priceDomain = useMemo<[number, number]>(() => {
     if (!priceValues.length) return [0, 100]
@@ -175,6 +234,14 @@ export function ProductDetail({
       : Math.max(20, Math.round((maximum - minimum) * 0.12))
     return [Math.max(0, minimum - padding), maximum + padding]
   }, [priceValues])
+  const priceTimeDomain = useMemo<[number, number]>(() => {
+    if (!chartRows.length) return [0, DAY_MILLISECONDS]
+    const first = parseISO(chartRows[0].report_date).getTime()
+    const last = parseISO(chartRows[chartRows.length - 1].report_date).getTime()
+    return first === last
+      ? [first - DAY_MILLISECONDS, last + DAY_MILLISECONDS]
+      : [first, last]
+  }, [chartRows])
 
   const salesRank = productSummaries.findIndex((product) => product.productId === productId) + 1
   const quantityRank = [...productSummaries]
@@ -283,7 +350,13 @@ export function ProductDetail({
               </div>
               <div className="chart-wrap">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartRows} margin={{ top: 4, right: 12, left: 8, bottom: 0 }}>
+                  <AreaChart data={chartRows} margin={{ top: 8, right: 12, left: 8, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="productNetSalesGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#d29345" stopOpacity={0.42} />
+                        <stop offset="100%" stopColor="#d29345" stopOpacity={0.04} />
+                      </linearGradient>
+                    </defs>
                     <CartesianGrid stroke="#e6e9e2" strokeDasharray="3 5" vertical={false} />
                     <XAxis dataKey="report_date" tickFormatter={formatShortDate} minTickGap={24} />
                     <YAxis tickFormatter={(value) => `${Math.round(Number(value) / 1_000)}千`} />
@@ -291,8 +364,16 @@ export function ProductDetail({
                       labelFormatter={(label) => formatLongDate(String(label))}
                       formatter={(value) => [yen.format(Number(value)), '純売上']}
                     />
-                    <Line type="monotone" dataKey="net_sales_yen" stroke="#d29345" strokeWidth={3} dot={{ r: 3 }} />
-                  </LineChart>
+                    <Area
+                      type="monotone"
+                      dataKey="net_sales_yen"
+                      stroke="#c77f2e"
+                      strokeWidth={2}
+                      fill="url(#productNetSalesGradient)"
+                      dot={false}
+                      activeDot={{ r: 5, fill: '#c77f2e', stroke: '#fffdf7', strokeWidth: 2 }}
+                    />
+                  </AreaChart>
                 </ResponsiveContainer>
               </div>
             </article>
@@ -310,28 +391,40 @@ export function ProductDetail({
               <div className="chart-wrap compact">
                 {priceValues.length ? (
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                      data={chartRows}
+                    <ScatterChart
                       margin={{ top: priceValues.length <= 5 ? 30 : 8, right: 16, left: 8, bottom: 0 }}
                     >
                       <CartesianGrid stroke="#e6e9e2" strokeDasharray="3 5" vertical={false} />
-                      <XAxis dataKey="report_date" tickFormatter={formatShortDate} minTickGap={24} />
+                      <XAxis
+                        type="number"
+                        dataKey="timestamp"
+                        domain={priceTimeDomain}
+                        scale="time"
+                        tickFormatter={(value) => format(new Date(Number(value)), 'M/d', { locale: ja })}
+                        minTickGap={24}
+                      />
                       <YAxis
+                        type="number"
+                        dataKey="average_unit_revenue_yen"
                         domain={priceDomain}
                         tickFormatter={(value) => `¥${integer.format(Number(value))}`}
                       />
-                      <Tooltip
-                        labelFormatter={(label) => formatLongDate(String(label))}
-                        formatter={(value) => [yen.format(Number(value)), '平均実売単価']}
+                      <Tooltip content={<PriceTooltip />} cursor={{ stroke: '#c9cec8', strokeDasharray: '3 4' }} />
+                      <ReferenceLine
+                        y={current.averageUnitRevenueYen}
+                        stroke="#8aa092"
+                        strokeDasharray="5 5"
+                        label={{
+                          value: `期間平均 ${yen.format(current.averageUnitRevenueYen)}`,
+                          position: 'insideTopRight',
+                          fill: '#65756b',
+                          fontSize: 11,
+                        }}
                       />
-                      <Line
-                        type="monotone"
-                        dataKey="average_unit_revenue_yen"
-                        stroke="#375f4c"
-                        strokeWidth={3}
-                        connectNulls={false}
-                        dot={{ r: 4, fill: '#375f4c', stroke: '#fffdf7', strokeWidth: 2 }}
-                        activeDot={{ r: 7, fill: '#d29345', stroke: '#fffdf7', strokeWidth: 2 }}
+                      <Scatter
+                        data={priceChartRows}
+                        shape={<PriceMarker />}
+                        activeShape={<PriceMarker active />}
                       >
                         {priceValues.length <= 5 && (
                           <LabelList
@@ -341,8 +434,8 @@ export function ProductDetail({
                             className="price-point-label"
                           />
                         )}
-                      </Line>
-                    </LineChart>
+                      </Scatter>
+                    </ScatterChart>
                   </ResponsiveContainer>
                 ) : (
                   <div className="chart-empty">
