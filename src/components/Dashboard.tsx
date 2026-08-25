@@ -83,11 +83,13 @@ function buildHashHref(productId: string | null, startDate: string, endDate: str
 
 type DashboardProps = {
   userId: string
-  userEmail: string
   onSignOut: () => Promise<void>
 }
 
-export function Dashboard({ userId, userEmail, onSignOut }: DashboardProps) {
+type ProductSortKey = 'canonicalName' | 'soldQuantity' | 'grossSalesYen' | 'discountAmountYen' | 'netSalesYen'
+type SortDirection = 'ascending' | 'descending'
+
+export function Dashboard({ userId, onSignOut }: DashboardProps) {
   const initialRoute = readHashRoute()
   const [dailyRows, setDailyRows] = useState<DailySalesRow[]>([])
   const [productRows, setProductRows] = useState<DailyProductSalesRow[]>([])
@@ -96,6 +98,11 @@ export function Dashboard({ userId, userEmail, onSignOut }: DashboardProps) {
   const [startDate, setStartDate] = useState(initialRoute.startDate)
   const [endDate, setEndDate] = useState(initialRoute.endDate)
   const [appRole, setAppRole] = useState('viewer')
+  const [displayName, setDisplayName] = useState('ログインユーザー')
+  const [productSort, setProductSort] = useState<{
+    key: ProductSortKey
+    direction: SortDirection
+  }>({ key: 'netSalesYen', direction: 'descending' })
   const [refreshKey, setRefreshKey] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
@@ -124,13 +131,14 @@ export function Dashboard({ userId, userEmail, onSignOut }: DashboardProps) {
         const [daily, products, roleResponse] = await Promise.all([
           fetchAllRows<DailySalesRow>('daily_sales_summary'),
           fetchAllRows<DailyProductSalesRow>('daily_product_sales'),
-          supabase.from('app_users').select('app_role').eq('user_id', userId).single(),
+          supabase.from('app_users').select('app_role, display_name').eq('user_id', userId).single(),
         ])
         if (roleResponse.error) throw roleResponse.error
         if (!active) return
         setDailyRows(daily)
         setProductRows(products)
         setAppRole(String(roleResponse.data.app_role))
+        setDisplayName(String(roleResponse.data.display_name))
         if (daily.length) {
           setStartDate((current) => current || daily[0].report_date)
           setEndDate((current) => current || daily[daily.length - 1].report_date)
@@ -166,6 +174,19 @@ export function Dashboard({ userId, userEmail, onSignOut }: DashboardProps) {
     [filteredProducts],
   )
   const topProducts = productSummary.slice(0, 10)
+  const sortedProductSummary = useMemo(() => {
+    const direction = productSort.direction === 'ascending' ? 1 : -1
+    return [...productSummary].sort((left, right) => {
+      if (productSort.key === 'canonicalName') {
+        return left.canonicalName.localeCompare(right.canonicalName, 'ja') * direction
+      }
+      return (left[productSort.key] - right[productSort.key]) * direction
+    })
+  }, [productSort, productSummary])
+  const reportDates = useMemo(
+    () => [...new Set(filteredDaily.map((row) => row.report_date))].sort(),
+    [filteredDaily],
+  )
   const marketName = dailyRows[0]?.market_name ?? 'やんばる市場'
   const selectedProductName = productRows.find(
     (row) => row.product_id === selectedProductId,
@@ -180,6 +201,20 @@ export function Dashboard({ userId, userEmail, onSignOut }: DashboardProps) {
       '',
       buildHashHref(selectedProductId, nextStartDate, nextEndDate),
     )
+  }
+
+  function updateProductSort(key: ProductSortKey) {
+    setProductSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === 'ascending'
+        ? 'descending'
+        : 'ascending',
+    }))
+  }
+
+  function sortIndicator(key: ProductSortKey) {
+    if (productSort.key !== key) return '↕'
+    return productSort.direction === 'ascending' ? '↑' : '↓'
   }
 
   return (
@@ -198,7 +233,7 @@ export function Dashboard({ userId, userEmail, onSignOut }: DashboardProps) {
               {isImportRoute ? 'ダッシュボード' : 'データ登録'}
             </a>
           ) : null}
-          <span>{userEmail}</span>
+          <span>{displayName}</span>
           <button className="text-button" type="button" onClick={() => void onSignOut()}>
             ログアウト
           </button>
@@ -212,7 +247,7 @@ export function Dashboard({ userId, userEmail, onSignOut }: DashboardProps) {
             <h1>
               {isImportRoute
                 ? '売上状況を一括登録'
-                : selectedProductId ? `${selectedProductName}の販売分析` : '販売のいまを、次の出荷へ。'}
+                : selectedProductId ? `${selectedProductName}の販売状況` : '全体の販売状況'}
             </h1>
             <p className="muted">
               {isImportRoute
@@ -268,6 +303,7 @@ export function Dashboard({ userId, userEmail, onSignOut }: DashboardProps) {
               endDate={endDate}
               productSummaries={productSummary}
               totalNetSalesYen={summary.netSalesYen}
+              reportDates={reportDates}
               dashboardHref={dashboardHref}
             />
           ) : (
@@ -370,15 +406,35 @@ export function Dashboard({ userId, userEmail, onSignOut }: DashboardProps) {
                 <table>
                   <thead>
                     <tr>
-                      <th>商品名</th>
-                      <th>販売個数</th>
-                      <th>粗売上</th>
-                      <th>値引額</th>
-                      <th>純売上</th>
+                      <th aria-sort={productSort.key === 'canonicalName' ? productSort.direction : 'none'}>
+                        <button className="sort-button" type="button" onClick={() => updateProductSort('canonicalName')}>
+                          商品名 <span>{sortIndicator('canonicalName')}</span>
+                        </button>
+                      </th>
+                      <th aria-sort={productSort.key === 'soldQuantity' ? productSort.direction : 'none'}>
+                        <button className="sort-button" type="button" onClick={() => updateProductSort('soldQuantity')}>
+                          販売個数 <span>{sortIndicator('soldQuantity')}</span>
+                        </button>
+                      </th>
+                      <th aria-sort={productSort.key === 'grossSalesYen' ? productSort.direction : 'none'}>
+                        <button className="sort-button" type="button" onClick={() => updateProductSort('grossSalesYen')}>
+                          粗売上 <span>{sortIndicator('grossSalesYen')}</span>
+                        </button>
+                      </th>
+                      <th aria-sort={productSort.key === 'discountAmountYen' ? productSort.direction : 'none'}>
+                        <button className="sort-button" type="button" onClick={() => updateProductSort('discountAmountYen')}>
+                          値引額 <span>{sortIndicator('discountAmountYen')}</span>
+                        </button>
+                      </th>
+                      <th aria-sort={productSort.key === 'netSalesYen' ? productSort.direction : 'none'}>
+                        <button className="sort-button" type="button" onClick={() => updateProductSort('netSalesYen')}>
+                          純売上 <span>{sortIndicator('netSalesYen')}</span>
+                        </button>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {productSummary.map((product) => (
+                    {sortedProductSummary.map((product) => (
                       <tr key={product.productId}>
                         <td>
                           <a

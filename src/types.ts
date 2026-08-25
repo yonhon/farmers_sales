@@ -58,3 +58,12 @@ export type WeekdaySummary = {
   averageSoldQuantity: number
   averageNetSalesYen: number
 }
+
+export type ProductDailySeriesRow = {
+  report_date: string
+  sold_quantity: number
+  gross_sales_yen: number
+  discount_amount_yen: number
+  net_sales_yen: number
+  average_unit_revenue_yen: number | null
+}

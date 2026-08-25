@@ -54,7 +54,6 @@ export default function App() {
     <Suspense fallback={<main className="loading-screen">画面を読み込んでいます…</main>}>
       <Dashboard
         userId={session.user.id}
-        userEmail={session.user.email ?? 'ログインユーザー'}
         onSignOut={async () => {
           await supabase?.auth.signOut()
         }}

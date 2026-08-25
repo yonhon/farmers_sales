@@ -26,7 +26,7 @@ export function Login() {
     <main className="login-shell">
       <section className="login-intro" aria-labelledby="login-title">
         <p className="eyebrow">NODAI FARMERS MARKET</p>
-        <h1 id="login-title">畑から売り場まで、数字をひとつに。</h1>
+          <h1 id="login-title">収穫から販売まで、売上データをひと目で把握。</h1>
         <p>
           日々の販売を見渡し、次の出荷判断につなげるためのダッシュボードです。
         </p>

@@ -1,6 +1,7 @@
 import type {
   DailyProductSalesRow,
   DailySalesRow,
+  ProductDailySeriesRow,
   ProductAnalysisSummary,
   ProductSummary,
   SalesSummary,
@@ -146,4 +147,41 @@ export function aggregateWeekdays(
 
 export function calculateChangeRate(current: number, previous: number): number | null {
   return previous ? (current - previous) / previous : null
+}
+
+export function buildProductDailySeries(
+  rows: DailyProductSalesRow[],
+  reportDates: string[],
+): ProductDailySeriesRow[] {
+  const rowsByDate = new Map<string, Omit<ProductDailySeriesRow, 'report_date' | 'average_unit_revenue_yen'>>()
+
+  for (const row of rows) {
+    const current = rowsByDate.get(row.report_date) ?? {
+      sold_quantity: 0,
+      gross_sales_yen: 0,
+      discount_amount_yen: 0,
+      net_sales_yen: 0,
+    }
+    current.sold_quantity += Number(row.sold_quantity)
+    current.gross_sales_yen += Number(row.gross_sales_yen)
+    current.discount_amount_yen += Number(row.discount_amount_yen)
+    current.net_sales_yen += Number(row.net_sales_yen)
+    rowsByDate.set(row.report_date, current)
+  }
+
+  return [...new Set(reportDates)].sort().map((reportDate) => {
+    const row = rowsByDate.get(reportDate) ?? {
+      sold_quantity: 0,
+      gross_sales_yen: 0,
+      discount_amount_yen: 0,
+      net_sales_yen: 0,
+    }
+    return {
+      report_date: reportDate,
+      ...row,
+      average_unit_revenue_yen: row.sold_quantity
+        ? Math.round(row.net_sales_yen / row.sold_quantity)
+        : null,
+    }
+  })
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   aggregateProducts,
   aggregateWeekdays,
+  buildProductDailySeries,
   calculateChangeRate,
   filterByDate,
   summarizeProduct,
@@ -165,5 +166,46 @@ describe('analytics helpers', () => {
   it('returns null when a previous-period change cannot be calculated', () => {
     expect(calculateChangeRate(120, 100)).toBeCloseTo(0.2)
     expect(calculateChangeRate(120, 0)).toBeNull()
+  })
+
+  it('fills market report dates without product sales with zero', () => {
+    const rows: DailyProductSalesRow[] = [
+      {
+        report_date: '2026-06-18',
+        market_id: 'market-1',
+        product_id: 'product-a',
+        canonical_name: 'ゴーヤー',
+        sold_quantity: 2,
+        gross_sales_yen: 600,
+        discount_amount_yen: 0,
+        net_sales_yen: 600,
+      },
+      {
+        report_date: '2026-08-19',
+        market_id: 'market-1',
+        product_id: 'product-a',
+        canonical_name: 'ゴーヤー',
+        sold_quantity: 3,
+        gross_sales_yen: 900,
+        discount_amount_yen: 0,
+        net_sales_yen: 900,
+      },
+    ]
+
+    const result = buildProductDailySeries(
+      rows,
+      ['2026-06-18', '2026-06-19', '2026-06-20', '2026-08-19'],
+    )
+
+    expect(result).toHaveLength(4)
+    expect(result[1]).toEqual({
+      report_date: '2026-06-19',
+      sold_quantity: 0,
+      gross_sales_yen: 0,
+      discount_amount_yen: 0,
+      net_sales_yen: 0,
+      average_unit_revenue_yen: null,
+    })
+    expect(result[3].average_unit_revenue_yen).toBe(300)
   })
 })

@@ -20,6 +20,7 @@ import {
 
 import {
   aggregateWeekdays,
+  buildProductDailySeries,
   calculateChangeRate,
   filterByDate,
   summarizeProduct,
@@ -47,6 +48,7 @@ type ProductDetailProps = {
   endDate: string
   productSummaries: ProductSummary[]
   totalNetSalesYen: number
+  reportDates: string[]
   dashboardHref: string
 }
 
@@ -98,6 +100,7 @@ export function ProductDetail({
   endDate,
   productSummaries,
   totalNetSalesYen,
+  reportDates,
   dashboardHref,
 }: ProductDetailProps) {
   const [rows, setRows] = useState<DailyProductSalesRow[]>([])
@@ -153,13 +156,8 @@ export function ProductDetail({
   const previous = useMemo(() => summarizeProduct(previousRows), [previousRows])
   const weekdays = useMemo(() => aggregateWeekdays(currentRows), [currentRows])
   const chartRows = useMemo(
-    () => currentRows.map((row) => ({
-      ...row,
-      average_unit_revenue_yen: Number(row.sold_quantity)
-        ? Math.round(Number(row.net_sales_yen) / Number(row.sold_quantity))
-        : 0,
-    })),
-    [currentRows],
+    () => buildProductDailySeries(currentRows, reportDates),
+    [currentRows, reportDates],
   )
 
   const salesRank = productSummaries.findIndex((product) => product.productId === productId) + 1
@@ -232,8 +230,8 @@ export function ProductDetail({
         </div>
       </section>
 
-      {currentRows.length === 0 ? (
-        <div className="status-panel">選択期間には、この商品の販売記録がありません。</div>
+      {chartRows.length === 0 ? (
+        <div className="status-panel">選択期間には、市場の販売報告がありません。</div>
       ) : (
         <>
           <section className="chart-grid product-chart-grid">
@@ -336,7 +334,7 @@ export function ProductDetail({
                 <p className="section-kicker">DAILY RECORDS</p>
                 <h2>日別明細</h2>
               </div>
-              <span className="record-count">{currentRows.length}件</span>
+              <span className="record-count">{chartRows.length}日分</span>
             </div>
             <div className="table-scroll">
               <table>
@@ -358,14 +356,18 @@ export function ProductDetail({
                       <td>{yen.format(Number(row.gross_sales_yen))}</td>
                       <td>{yen.format(Number(row.discount_amount_yen))}</td>
                       <td><strong>{yen.format(Number(row.net_sales_yen))}</strong></td>
-                      <td>{yen.format(row.average_unit_revenue_yen)}</td>
+                      <td>
+                        {row.average_unit_revenue_yen === null
+                          ? '—'
+                          : yen.format(row.average_unit_revenue_yen)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <p className="data-note">
-              販売記録がない日は、休業・未出荷・販売ゼロを区別できないため集計に含めていません。
+              市場全体の販売報告がある日に商品明細がなかった場合は、販売個数・売上を0として表示しています。
             </p>
           </section>
         </>

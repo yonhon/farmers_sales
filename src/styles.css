@@ -189,6 +189,10 @@ table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
 th, td { padding: 14px 16px; border-bottom: 1px solid #e7e9e3; text-align: right; white-space: nowrap; }
 th { color: var(--ink-muted); font-size: 0.7rem; letter-spacing: 0.05em; background: #f7f6f0; }
 th:first-child, td:first-child { text-align: left; }
+.sort-button { display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; font-weight: 700; letter-spacing: inherit; cursor: pointer; }
+th:first-child .sort-button { justify-content: flex-start; }
+.sort-button:hover, .sort-button:focus-visible { color: var(--forest); }
+.sort-button span { min-width: 1em; color: var(--leaf); text-align: center; }
 tbody tr:hover { background: #f8f8f2; }
 tbody tr:last-child td { border-bottom: 0; }
 
