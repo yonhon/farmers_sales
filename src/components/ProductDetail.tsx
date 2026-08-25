@@ -10,6 +10,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -159,6 +160,21 @@ export function ProductDetail({
     () => buildProductDailySeries(currentRows, reportDates),
     [currentRows, reportDates],
   )
+  const priceValues = useMemo(
+    () => chartRows.flatMap((row) => (
+      row.average_unit_revenue_yen === null ? [] : [row.average_unit_revenue_yen]
+    )),
+    [chartRows],
+  )
+  const priceDomain = useMemo<[number, number]>(() => {
+    if (!priceValues.length) return [0, 100]
+    const minimum = Math.min(...priceValues)
+    const maximum = Math.max(...priceValues)
+    const padding = minimum === maximum
+      ? Math.max(50, Math.round(maximum * 0.1))
+      : Math.max(20, Math.round((maximum - minimum) * 0.12))
+    return [Math.max(0, minimum - padding), maximum + padding]
+  }, [priceValues])
 
   const salesRank = productSummaries.findIndex((product) => product.productId === productId) + 1
   const quantityRank = [...productSummaries]
@@ -289,20 +305,50 @@ export function ProductDetail({
                   <p className="section-kicker">UNIT REVENUE</p>
                   <h2>平均実売単価の推移</h2>
                 </div>
+                <span className="record-count">販売実績 {priceValues.length}日</span>
               </div>
               <div className="chart-wrap compact">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartRows} margin={{ top: 4, right: 12, left: 8, bottom: 0 }}>
-                    <CartesianGrid stroke="#e6e9e2" strokeDasharray="3 5" vertical={false} />
-                    <XAxis dataKey="report_date" tickFormatter={formatShortDate} minTickGap={24} />
-                    <YAxis tickFormatter={(value) => `¥${integer.format(Number(value))}`} />
-                    <Tooltip
-                      labelFormatter={(label) => formatLongDate(String(label))}
-                      formatter={(value) => [yen.format(Number(value)), '平均実売単価']}
-                    />
-                    <Line type="monotone" dataKey="average_unit_revenue_yen" stroke="#375f4c" strokeWidth={3} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
+                {priceValues.length ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                      data={chartRows}
+                      margin={{ top: priceValues.length <= 5 ? 30 : 8, right: 16, left: 8, bottom: 0 }}
+                    >
+                      <CartesianGrid stroke="#e6e9e2" strokeDasharray="3 5" vertical={false} />
+                      <XAxis dataKey="report_date" tickFormatter={formatShortDate} minTickGap={24} />
+                      <YAxis
+                        domain={priceDomain}
+                        tickFormatter={(value) => `¥${integer.format(Number(value))}`}
+                      />
+                      <Tooltip
+                        labelFormatter={(label) => formatLongDate(String(label))}
+                        formatter={(value) => [yen.format(Number(value)), '平均実売単価']}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="average_unit_revenue_yen"
+                        stroke="#375f4c"
+                        strokeWidth={3}
+                        connectNulls={false}
+                        dot={{ r: 4, fill: '#375f4c', stroke: '#fffdf7', strokeWidth: 2 }}
+                        activeDot={{ r: 7, fill: '#d29345', stroke: '#fffdf7', strokeWidth: 2 }}
+                      >
+                        {priceValues.length <= 5 && (
+                          <LabelList
+                            dataKey="average_unit_revenue_yen"
+                            position="top"
+                            formatter={(value) => value === null ? '' : yen.format(Number(value))}
+                            className="price-point-label"
+                          />
+                        )}
+                      </Line>
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="chart-empty">
+                    平均実売単価を算出できる販売実績がありません。
+                  </div>
+                )}
               </div>
             </article>
 
