@@ -32,7 +32,7 @@ npm run dev
 
 認証画面はLINEログインを標準とし、既存のメール・パスワード認証は管理者用の予備手段として残しています。初回のLINEログイン直後はデータへアクセスできず、画面に表示された確認コードを管理者が承認すると利用可能になります。
 
-Supabase AuthにはIdentifierが`custom:line`のCustom OIDC Providerが必要です。LINE Channel secretはSupabase Dashboardだけに保存し、この公開リポジトリやGitHub Actions Variablesへ登録しないでください。DB migrationとLINE Developers Consoleを含む設定手順は、非公開データプラットフォーム側の`docs/supabase_setup.md`を参照してください。
+Supabase AuthにはIdentifierが`custom:line-oauth`のCustom OAuth2 Provider（Manual configuration）が必要です。LINE Channel secretはSupabase Dashboardだけに保存し、この公開リポジトリやGitHub Actions Variablesへ登録しないでください。DB migrationとLINE Developers Consoleを含む設定手順は、非公開データプラットフォーム側の`docs/supabase_setup.md`を参照してください。
 
 ## GitHub Pages
 
