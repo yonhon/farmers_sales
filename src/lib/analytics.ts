@@ -9,6 +9,10 @@ import type {
 } from '../types'
 import { getDay, parseISO } from 'date-fns'
 
+function countUniqueReportDates(rows: Array<{ report_date: string }>): number {
+  return new Set(rows.map((row) => row.report_date)).size
+}
+
 export function filterByDate<T extends { report_date: string }>(
   rows: T[],
   startDate: string,
@@ -24,7 +28,7 @@ export function filterByDate<T extends { report_date: string }>(
 export function summarizeSales(rows: DailySalesRow[]): SalesSummary {
   const totals = rows.reduce(
     (summary, row) => ({
-      reportDays: summary.reportDays + 1,
+      ...summary,
       soldQuantity: summary.soldQuantity + Number(row.sold_quantity),
       grossSalesYen: summary.grossSalesYen + Number(row.gross_sales_yen),
       discountAmountYen:
@@ -42,6 +46,7 @@ export function summarizeSales(rows: DailySalesRow[]): SalesSummary {
     },
   )
 
+  totals.reportDays = countUniqueReportDates(rows)
   totals.averageUnitRevenueYen = totals.soldQuantity
     ? Math.round(totals.netSalesYen / totals.soldQuantity)
     : 0
@@ -80,7 +85,6 @@ export function summarizeProduct(
   const totals = rows.reduce(
     (summary, row) => ({
       ...summary,
-      sellingDays: summary.sellingDays + 1,
       soldQuantity: summary.soldQuantity + Number(row.sold_quantity),
       grossSalesYen: summary.grossSalesYen + Number(row.gross_sales_yen),
       discountAmountYen:
@@ -99,6 +103,7 @@ export function summarizeProduct(
     },
   )
 
+  totals.sellingDays = countUniqueReportDates(rows)
   totals.averageUnitRevenueYen = totals.soldQuantity
     ? Math.round(totals.netSalesYen / totals.soldQuantity)
     : 0
@@ -117,7 +122,7 @@ const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0]
 export function aggregateWeekdays(
   rows: DailyProductSalesRow[],
 ): WeekdaySummary[] {
-  const weekdays = new Map<number, WeekdaySummary>()
+  const weekdays = new Map<number, WeekdaySummary & { reportDates: Set<string> }>()
 
   for (const row of rows) {
     const weekdayIndex = getDay(parseISO(row.report_date))
@@ -129,8 +134,10 @@ export function aggregateWeekdays(
       netSalesYen: 0,
       averageSoldQuantity: 0,
       averageNetSalesYen: 0,
+      reportDates: new Set<string>(),
     }
-    current.sellingDays += 1
+    current.reportDates.add(row.report_date)
+    current.sellingDays = current.reportDates.size
     current.soldQuantity += Number(row.sold_quantity)
     current.netSalesYen += Number(row.net_sales_yen)
     weekdays.set(weekdayIndex, current)
@@ -141,7 +148,9 @@ export function aggregateWeekdays(
     if (!summary) return []
     summary.averageSoldQuantity = summary.soldQuantity / summary.sellingDays
     summary.averageNetSalesYen = summary.netSalesYen / summary.sellingDays
-    return [summary]
+    const { reportDates: _reportDates, ...result } = summary
+    void _reportDates
+    return [result]
   })
 }
 

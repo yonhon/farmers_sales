@@ -163,6 +163,60 @@ describe('analytics helpers', () => {
     ])
   })
 
+  it('counts one selling day when the same date appears in multiple markets', () => {
+    const rows: DailyProductSalesRow[] = [
+      {
+        report_date: '2026-04-09',
+        market_id: 'market-1',
+        product_id: 'product-a',
+        canonical_name: 'トマト',
+        sold_quantity: 2,
+        gross_sales_yen: 600,
+        discount_amount_yen: 0,
+        net_sales_yen: 600,
+      },
+      {
+        report_date: '2026-04-09',
+        market_id: 'market-2',
+        product_id: 'product-a',
+        canonical_name: 'トマト',
+        sold_quantity: 3,
+        gross_sales_yen: 900,
+        discount_amount_yen: 0,
+        net_sales_yen: 900,
+      },
+    ]
+    const salesRows: DailySalesRow[] = rows.map((row, index) => ({
+      report_date: row.report_date,
+      market_id: row.market_id,
+      market_code: `market-${index + 1}`,
+      market_name: `市場${index + 1}`,
+      sold_quantity: row.sold_quantity,
+      gross_sales_yen: row.gross_sales_yen,
+      discount_amount_yen: row.discount_amount_yen,
+      net_sales_yen: row.net_sales_yen,
+    }))
+
+    expect(summarizeSales(salesRows)).toMatchObject({
+      reportDays: 1,
+      soldQuantity: 5,
+      netSalesYen: 1_500,
+    })
+    expect(summarizeProduct(rows)).toMatchObject({
+      sellingDays: 1,
+      soldQuantity: 5,
+      averageSoldPerSellingDay: 5,
+    })
+    expect(aggregateWeekdays(rows)).toEqual([
+      expect.objectContaining({
+        weekdayLabel: '木曜',
+        sellingDays: 1,
+        averageSoldQuantity: 5,
+        averageNetSalesYen: 1_500,
+      }),
+    ])
+  })
+
   it('returns null when a previous-period change cannot be calculated', () => {
     expect(calculateChangeRate(120, 100)).toBeCloseTo(0.2)
     expect(calculateChangeRate(120, 0)).toBeNull()

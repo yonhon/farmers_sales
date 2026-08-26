@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   differenceInCalendarDays,
   format,
+  isValid,
   parseISO,
   subDays,
 } from 'date-fns'
@@ -111,8 +112,14 @@ export function ProductDetail({
   const [errorMessage, setErrorMessage] = useState('')
 
   const comparisonRange = useMemo(() => {
-    const periodDays = differenceInCalendarDays(parseISO(endDate), parseISO(startDate)) + 1
-    const previousEnd = subDays(parseISO(startDate), 1)
+    const parsedStartDate = parseISO(startDate)
+    const parsedEndDate = parseISO(endDate)
+    if (!isValid(parsedStartDate) || !isValid(parsedEndDate) || startDate > endDate) {
+      return null
+    }
+
+    const periodDays = differenceInCalendarDays(parsedEndDate, parsedStartDate) + 1
+    const previousEnd = subDays(parsedStartDate, 1)
     return {
       previousStart: format(subDays(previousEnd, periodDays - 1), 'yyyy-MM-dd'),
       previousEnd: format(previousEnd, 'yyyy-MM-dd'),
@@ -120,6 +127,9 @@ export function ProductDetail({
   }, [endDate, startDate])
 
   useEffect(() => {
+    if (!comparisonRange) return
+
+    const previousStart = comparisonRange.previousStart
     let active = true
 
     async function loadProduct() {
@@ -128,7 +138,7 @@ export function ProductDetail({
       try {
         const productRows = await fetchProductRows(
           productId,
-          comparisonRange.previousStart,
+          previousStart,
           endDate,
         )
         if (active) setRows(productRows)
@@ -145,15 +155,17 @@ export function ProductDetail({
     return () => {
       active = false
     }
-  }, [comparisonRange.previousStart, endDate, productId])
+  }, [comparisonRange, endDate, productId])
 
   const currentRows = useMemo(
     () => filterByDate(rows, startDate, endDate),
     [endDate, rows, startDate],
   )
   const previousRows = useMemo(
-    () => filterByDate(rows, comparisonRange.previousStart, comparisonRange.previousEnd),
-    [comparisonRange.previousEnd, comparisonRange.previousStart, rows],
+    () => comparisonRange
+      ? filterByDate(rows, comparisonRange.previousStart, comparisonRange.previousEnd)
+      : [],
+    [comparisonRange, rows],
   )
   const current = useMemo(() => summarizeProduct(currentRows), [currentRows])
   const previous = useMemo(() => summarizeProduct(previousRows), [previousRows])
@@ -182,6 +194,14 @@ export function ProductDetail({
     .sort((left, right) => right.soldQuantity - left.soldQuantity)
     .findIndex((product) => product.productId === productId) + 1
   const salesShare = totalNetSalesYen ? current.netSalesYen / totalNetSalesYen : 0
+
+  if (!comparisonRange) {
+    return (
+      <div className="status-panel error" role="alert">
+        日付範囲が不正です。商品別集計へ戻って期間を選び直してください。
+      </div>
+    )
+  }
 
   if (isLoading) {
     return <div className="status-panel">{productName}の分析データを読み込んでいます…</div>
