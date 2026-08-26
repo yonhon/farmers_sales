@@ -33,7 +33,7 @@ export function Login({ authErrorMessage = '' }: LoginProps) {
     setErrorMessage('')
     const redirectTo = new URL(import.meta.env.BASE_URL, window.location.origin).toString()
     const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'custom:line',
+      provider: 'custom:line-oauth',
       options: { redirectTo },
     })
 
