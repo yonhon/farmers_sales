@@ -72,6 +72,7 @@ type UsageEventRow = {
   user_id: string | null
   display_name_snapshot: string
   event_type: 'page_view' | 'action' | 'error'
+  event_origin: 'client' | 'server' | 'legacy'
   page_path: string
   action_name: string | null
   target_type: string | null
@@ -104,6 +105,12 @@ function eventLabel(eventType: UsageEventRow['event_type']) {
   return 'エラー'
 }
 
+function originLabel(origin: UsageEventRow['event_origin']) {
+  if (origin === 'server') return 'DB監査'
+  if (origin === 'client') return 'クライアント'
+  return '移行前'
+}
+
 function buildTrendRows<T extends { user_id: string | null; pv: number }>(
   metrics: Array<Record<string, unknown>>,
   userRows: T[],
@@ -133,6 +140,7 @@ export function UsageAdmin() {
   const [historyCount, setHistoryCount] = useState(0)
   const [userFilter, setUserFilter] = useState('')
   const [eventFilter, setEventFilter] = useState('')
+  const [originFilter, setOriginFilter] = useState('')
   const [historyPage, setHistoryPage] = useState(0)
   const [reloadKey, setReloadKey] = useState(0)
   const [loadedAt, setLoadedAt] = useState<Date | null>(null)
@@ -140,16 +148,14 @@ export function UsageAdmin() {
   const [errorMessage, setErrorMessage] = useState('')
 
   const load = useCallback(async () => {
-    if (!supabase) return
-    setIsLoading(true)
-    setErrorMessage('')
+    if (!supabase) return null
 
     const dailyFrom = format(subDays(new Date(), days - 1), 'yyyy-MM-dd')
     const monthlyFrom = format(subMonths(new Date(), 11), 'yyyy-MM-01')
     let historyQuery = supabase
       .from('usage_events')
       .select(
-        'event_id, event_at, user_id, display_name_snapshot, event_type, page_path, action_name, target_type, target_id, outcome, error_code, message_summary',
+        'event_id, event_at, user_id, display_name_snapshot, event_type, event_origin, page_path, action_name, target_type, target_id, outcome, error_code, message_summary',
         { count: 'exact' },
       )
       .gte('event_at', subDays(new Date(), days).toISOString())
@@ -158,6 +164,7 @@ export function UsageAdmin() {
 
     if (userFilter) historyQuery = historyQuery.eq('user_id', userFilter)
     if (eventFilter) historyQuery = historyQuery.eq('event_type', eventFilter)
+    if (originFilter) historyQuery = historyQuery.eq('event_origin', originFilter)
 
     const [daily, monthly, dailyUsers, monthlyUsers, users, errors, events] = await Promise.all([
       supabase.schema('analytics').from('usage_daily_metrics_jst')
@@ -180,20 +187,35 @@ export function UsageAdmin() {
     const failed = [daily, monthly, dailyUsers, monthlyUsers, users, errors, events].find((response) => response.error)
     if (failed?.error) throw failed.error
 
-    setDailyMetrics(asNumber((daily.data ?? []) as DailyMetric[], ['pv', 'uu', 'action_count', 'error_count']))
-    setMonthlyMetrics(asNumber((monthly.data ?? []) as MonthlyMetric[], ['pv', 'uu', 'action_count', 'error_count']))
-    setDailyUserPv(asNumber((dailyUsers.data ?? []) as DailyUserPv[], ['pv']))
-    setMonthlyUserPv(asNumber((monthlyUsers.data ?? []) as MonthlyUserPv[], ['pv']))
-    setUserSummaries(asNumber((users.data ?? []) as UserSummary[], ['pv_7d', 'pv_30d', 'actions_30d', 'errors_30d']))
-    setLatestErrors(asNumber((errors.data ?? []) as LatestError[], ['count_7d']))
-    setHistory((events.data ?? []) as UsageEventRow[])
-    setHistoryCount(events.count ?? 0)
-    setLoadedAt(new Date())
-  }, [days, eventFilter, historyPage, reloadKey, userFilter])
+    return {
+      dailyMetrics: asNumber((daily.data ?? []) as DailyMetric[], ['pv', 'uu', 'action_count', 'error_count']),
+      monthlyMetrics: asNumber((monthly.data ?? []) as MonthlyMetric[], ['pv', 'uu', 'action_count', 'error_count']),
+      dailyUserPv: asNumber((dailyUsers.data ?? []) as DailyUserPv[], ['pv']),
+      monthlyUserPv: asNumber((monthlyUsers.data ?? []) as MonthlyUserPv[], ['pv']),
+      userSummaries: asNumber((users.data ?? []) as UserSummary[], ['pv_7d', 'pv_30d', 'actions_30d', 'errors_30d']),
+      latestErrors: asNumber((errors.data ?? []) as LatestError[], ['count_7d']),
+      history: (events.data ?? []) as UsageEventRow[],
+      historyCount: events.count ?? 0,
+    }
+  }, [days, eventFilter, historyPage, originFilter, reloadKey, userFilter])
 
   useEffect(() => {
     let active = true
+    setIsLoading(true)
+    setErrorMessage('')
     void load()
+      .then((result) => {
+        if (!active || !result) return
+        setDailyMetrics(result.dailyMetrics)
+        setMonthlyMetrics(result.monthlyMetrics)
+        setDailyUserPv(result.dailyUserPv)
+        setMonthlyUserPv(result.monthlyUserPv)
+        setUserSummaries(result.userSummaries)
+        setLatestErrors(result.latestErrors)
+        setHistory(result.history)
+        setHistoryCount(result.historyCount)
+        setLoadedAt(new Date())
+      })
       .catch((error) => {
         if (!active) return
         console.error(error)
@@ -362,21 +384,22 @@ export function UsageAdmin() {
               <div className="history-filters">
                 <label>ユーザー<select value={userFilter} onChange={(event) => { setUserFilter(event.target.value); setHistoryPage(0) }}><option value="">すべて</option>{userSummaries.map((user) => <option key={user.user_id} value={user.user_id}>{user.display_name}</option>)}</select></label>
                 <label>種別<select value={eventFilter} onChange={(event) => { setEventFilter(event.target.value); setHistoryPage(0) }}><option value="">すべて</option><option value="page_view">画面閲覧</option><option value="action">操作</option><option value="error">エラー</option></select></label>
+                <label>記録元<select value={originFilter} onChange={(event) => { setOriginFilter(event.target.value); setHistoryPage(0) }}><option value="">すべて</option><option value="server">DB監査</option><option value="client">クライアント</option><option value="legacy">移行前</option></select></label>
               </div>
             </div>
             <div className="table-scroll">
               <table>
-                <thead><tr><th>日時</th><th>ユーザー</th><th>種別</th><th>画面</th><th>操作・エラー</th><th>対象</th><th>結果</th></tr></thead>
+                <thead><tr><th>日時</th><th>ユーザー</th><th>種別</th><th>記録元</th><th>画面</th><th>操作・エラー</th><th>対象</th><th>結果</th></tr></thead>
                 <tbody>
                   {history.map((event) => (
                     <tr key={event.event_id}>
-                      <td>{formatJst(event.event_at)}</td><td>{event.display_name_snapshot}</td><td>{eventLabel(event.event_type)}</td><td>{event.page_path}</td>
+                      <td>{formatJst(event.event_at)}</td><td>{event.display_name_snapshot}</td><td>{eventLabel(event.event_type)}</td><td><span className={`origin-badge ${event.event_origin}`}>{originLabel(event.event_origin)}</span></td><td>{event.page_path}</td>
                       <td>{event.action_name ?? event.error_code ?? '—'}{event.message_summary ? <small className="history-message">{event.message_summary}</small> : null}</td>
                       <td>{event.target_type ? `${event.target_type}${event.target_id ? `: ${event.target_id}` : ''}` : '—'}</td>
                       <td>{event.outcome === 'success' ? '成功' : event.outcome === 'failure' ? '失敗' : '—'}</td>
                     </tr>
                   ))}
-                  {!history.length && <tr><td colSpan={7} className="empty-cell">条件に一致する履歴はありません。</td></tr>}
+                  {!history.length && <tr><td colSpan={8} className="empty-cell">条件に一致する履歴はありません。</td></tr>}
                 </tbody>
               </table>
             </div>

@@ -51,11 +51,14 @@ function PendingRequest({ request, onReviewed }: {
     if (error) {
       void recordUsageEvent({
         eventType: 'action',
-        actionName: approve ? 'access_request_approved' : 'access_request_rejected',
+        actionName: 'access_request_review_failed',
         targetType: 'user',
         targetId: request.user_id,
         outcome: 'failure',
-        metadata: { errorCode: error.code ?? null },
+        metadata: {
+          attemptedDecision: approve ? 'approve' : 'reject',
+          errorCode: error.code ?? null,
+        },
       })
       setErrorMessage(error.message)
       return
@@ -138,7 +141,7 @@ function ManagedUser({ user, isCurrentUser, onUpdated }: {
     if (error) {
       void recordUsageEvent({
         eventType: 'action',
-        actionName: 'user_permissions_updated',
+        actionName: 'user_permissions_update_failed',
         targetType: 'user',
         targetId: user.user_id,
         outcome: 'failure',

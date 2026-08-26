@@ -441,6 +441,10 @@ tbody tr:last-child td { border-bottom: 0; }
 .history-filters select { min-width: 150px; }
 .table-filter-button { padding: 0; border: 0; color: var(--forest); background: transparent; font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 .history-message { display: block; max-width: 320px; margin-top: 4px; color: var(--ink-muted); white-space: normal; }
+.origin-badge { display: inline-flex; padding: 4px 8px; border-radius: 99px; font-size: 0.68rem; font-weight: 700; white-space: nowrap; }
+.origin-badge.server { color: #25553e; background: #e2f1e7; }
+.origin-badge.client { color: #785415; background: #fff3d7; }
+.origin-badge.legacy { color: #5e6260; background: #ecefed; }
 .empty-cell { padding: 28px !important; color: var(--ink-muted); text-align: center !important; }
 .history-pagination { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 16px; color: var(--ink-muted); font-size: 0.78rem; }
 .history-pagination > div { display: flex; align-items: center; gap: 12px; }
