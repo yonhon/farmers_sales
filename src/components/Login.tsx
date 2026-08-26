@@ -2,7 +2,11 @@ import { type FormEvent, useState } from 'react'
 
 import { supabase } from '../lib/supabase'
 
-export function Login() {
+type LoginProps = {
+  authErrorMessage?: string
+}
+
+export function Login({ authErrorMessage = '' }: LoginProps) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -72,7 +76,9 @@ export function Login() {
             {isSubmitting ? 'LINEへ移動中…' : 'LINEで登録・ログイン'}
           </button>
 
-          {errorMessage && <p className="form-error" role="alert">{errorMessage}</p>}
+          {(errorMessage || authErrorMessage) && (
+            <p className="form-error" role="alert">{errorMessage || authErrorMessage}</p>
+          )}
 
           <details className="admin-login">
             <summary>管理者用ログイン</summary>

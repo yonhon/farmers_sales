@@ -7,6 +7,7 @@ import { isSupabaseConfigured, supabase } from './lib/supabase'
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined)
+  const [authErrorMessage, setAuthErrorMessage] = useState('')
 
   useEffect(() => {
     if (!supabase) {
@@ -14,10 +15,19 @@ export default function App() {
       return
     }
 
-    void supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (error) {
+        console.error(error)
+        setAuthErrorMessage('ログイン結果を確認できませんでした。もう一度LINEログインをお試しください。')
+      } else if (!data.session && new URLSearchParams(window.location.search).has('code')) {
+        setAuthErrorMessage('LINE認証は完了しましたが、ログイン状態を保存できませんでした。もう一度お試しください。')
+      }
+      setSession(data.session)
+    })
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (nextSession) setAuthErrorMessage('')
       setSession(nextSession)
     })
 
@@ -43,7 +53,7 @@ export default function App() {
     return <main className="loading-screen">認証状態を確認しています…</main>
   }
 
-  if (!session) return <Login />
+  if (!session) return <Login authErrorMessage={authErrorMessage} />
 
   const suggestedDisplayName = String(
     session.user.user_metadata.name
