@@ -15,11 +15,23 @@ export default function App() {
       return
     }
 
+    const callbackParams = new URLSearchParams(window.location.search)
+    const callbackError = callbackParams.get('error_description')
+      ?? callbackParams.get('error')
+    const callbackErrorCode = callbackParams.get('error_code')
+
+    if (callbackError) {
+      const errorCodeSuffix = callbackErrorCode ? `（${callbackErrorCode}）` : ''
+      setAuthErrorMessage(`LINEログインに失敗しました${errorCodeSuffix}: ${callbackError}`)
+    }
+
     void supabase.auth.getSession().then(({ data, error }) => {
       if (error) {
         console.error(error)
-        setAuthErrorMessage('ログイン結果を確認できませんでした。もう一度LINEログインをお試しください。')
-      } else if (!data.session && new URLSearchParams(window.location.search).has('code')) {
+        if (!callbackError) {
+          setAuthErrorMessage('ログイン結果を確認できませんでした。もう一度LINEログインをお試しください。')
+        }
+      } else if (!data.session && callbackParams.has('code')) {
         setAuthErrorMessage('LINE認証は完了しましたが、ログイン状態を保存できませんでした。もう一度お試しください。')
       }
       setSession(data.session)
