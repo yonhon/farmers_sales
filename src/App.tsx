@@ -1,14 +1,9 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 
+import { AccessGate } from './components/AccessGate'
 import { Login } from './components/Login'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
-
-const Dashboard = lazy(() =>
-  import('./components/Dashboard').then((module) => ({
-    default: module.Dashboard,
-  })),
-)
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined)
@@ -50,14 +45,20 @@ export default function App() {
 
   if (!session) return <Login />
 
+  const suggestedDisplayName = String(
+    session.user.user_metadata.name
+      ?? session.user.user_metadata.full_name
+      ?? session.user.email
+      ?? '',
+  )
+
   return (
-    <Suspense fallback={<main className="loading-screen">画面を読み込んでいます…</main>}>
-      <Dashboard
-        userId={session.user.id}
-        onSignOut={async () => {
-          await supabase?.auth.signOut()
-        }}
-      />
-    </Suspense>
+    <AccessGate
+      userId={session.user.id}
+      suggestedDisplayName={suggestedDisplayName}
+      onSignOut={async () => {
+        await supabase?.auth.signOut()
+      }}
+    />
   )
 }

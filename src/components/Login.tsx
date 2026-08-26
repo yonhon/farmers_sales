@@ -22,6 +22,23 @@ export function Login() {
     }
   }
 
+  async function handleLineLogin() {
+    if (!supabase) return
+
+    setIsSubmitting(true)
+    setErrorMessage('')
+    const redirectTo = new URL(import.meta.env.BASE_URL, window.location.origin).toString()
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'custom:line',
+      options: { redirectTo },
+    })
+
+    if (error) {
+      setIsSubmitting(false)
+      setErrorMessage('LINEログインを開始できませんでした。管理者へお問い合わせください。')
+    }
+  }
+
   return (
     <main className="login-shell">
       <section className="login-intro" aria-labelledby="login-title">
@@ -41,35 +58,51 @@ export function Login() {
         <div>
           <p className="section-kicker">MEMBER SIGN IN</p>
           <h2>販売ダッシュボード</h2>
-          <p className="muted">登録済みのSupabase Authアカウントでログインします。</p>
+          <p className="muted">初めての方も、登録済みの方もLINEからお進みください。</p>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <label>
-            メールアドレス
-            <input
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
-              required
-            />
-          </label>
-          <label>
-            パスワード
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </label>
-          {errorMessage && <p className="form-error" role="alert">{errorMessage}</p>}
-          <button className="primary-button" type="submit" disabled={isSubmitting}>
-            {isSubmitting ? '確認中…' : 'ログイン'}
+        <div className="login-options">
+          <button
+            className="line-login-button"
+            type="button"
+            disabled={isSubmitting}
+            onClick={() => void handleLineLogin()}
+          >
+            <span aria-hidden="true">LINE</span>
+            {isSubmitting ? 'LINEへ移動中…' : 'LINEで登録・ログイン'}
           </button>
-        </form>
+
+          {errorMessage && <p className="form-error" role="alert">{errorMessage}</p>}
+
+          <details className="admin-login">
+            <summary>管理者用ログイン</summary>
+            <form onSubmit={handleSubmit}>
+              <label>
+                メールアドレス
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  autoComplete="email"
+                  required
+                />
+              </label>
+              <label>
+                パスワード
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
+              </label>
+              <button className="primary-button" type="submit" disabled={isSubmitting}>
+                {isSubmitting ? '確認中…' : 'メールでログイン'}
+              </button>
+            </form>
+          </details>
+        </div>
       </section>
     </main>
   )

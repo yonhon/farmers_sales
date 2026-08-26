@@ -18,6 +18,7 @@ import { supabase } from '../lib/supabase'
 import type { DailyProductSalesRow, DailySalesRow } from '../types'
 import { ProductDetail } from './ProductDetail'
 import { SalesImport } from './SalesImport'
+import { UserManagement } from './UserManagement'
 
 const PAGE_SIZE = 1_000
 const yen = new Intl.NumberFormat('ja-JP', {
@@ -232,6 +233,9 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
             <a className="header-link" href={isImportRoute ? dashboardHref : '#/sales/import'}>
               {isImportRoute ? 'ダッシュボード' : 'データ登録'}
             </a>
+          ) : null}
+          {appRole === 'admin' ? (
+            <a className="header-link" href="#access-requests">ユーザー管理</a>
           ) : null}
           <span>{displayName}</span>
           <button className="text-button" type="button" onClick={() => void onSignOut()}>
@@ -457,6 +461,9 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
           </>
           )
         )}
+        {!isLoading && !errorMessage && appRole === 'admin' ? (
+          <UserManagement currentUserId={userId} />
+        ) : null}
       </main>
     </div>
   )
