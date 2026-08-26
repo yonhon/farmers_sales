@@ -6,6 +6,7 @@ import {
   parseSalesText,
 } from '../lib/salesImport'
 import { supabase } from '../lib/supabase'
+import { recordUsageEvent } from '../lib/usageTracking'
 import type { ParseSalesResult, ParsedSalesLine } from '../lib/salesImport'
 
 const yen = new Intl.NumberFormat('ja-JP', {
@@ -255,6 +256,17 @@ export function SalesImport({ appRole, onImported }: SalesImportProps) {
     } catch (error) {
       console.error(error)
       const message = error instanceof Error ? error.message : String(error)
+      void recordUsageEvent({
+        eventType: 'action',
+        actionName: 'sales_import_failed',
+        targetType: 'sales_reports',
+        outcome: 'failure',
+        metadata: {
+          errorCode: error && typeof error === 'object' && 'code' in error
+            ? String(error.code)
+            : 'unknown',
+        },
+      })
       setErrorMessage(`登録できませんでした：${message}`)
     } finally {
       setIsSaving(false)

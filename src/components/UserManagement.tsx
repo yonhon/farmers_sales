@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { supabase } from '../lib/supabase'
+import { recordUsageEvent } from '../lib/usageTracking'
 
 type AppRole = 'viewer' | 'inputter' | 'admin'
 type AccountStatus = 'active' | 'suspended'
@@ -48,6 +49,14 @@ function PendingRequest({ request, onReviewed }: {
 
     setIsSubmitting(false)
     if (error) {
+      void recordUsageEvent({
+        eventType: 'action',
+        actionName: approve ? 'access_request_approved' : 'access_request_rejected',
+        targetType: 'user',
+        targetId: request.user_id,
+        outcome: 'failure',
+        metadata: { errorCode: error.code ?? null },
+      })
       setErrorMessage(error.message)
       return
     }
@@ -127,6 +136,14 @@ function ManagedUser({ user, isCurrentUser, onUpdated }: {
     setIsSaving(false)
 
     if (error) {
+      void recordUsageEvent({
+        eventType: 'action',
+        actionName: 'user_permissions_updated',
+        targetType: 'user',
+        targetId: user.user_id,
+        outcome: 'failure',
+        metadata: { errorCode: error.code ?? null },
+      })
       setErrorMessage(error.message)
       return
     }

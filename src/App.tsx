@@ -4,6 +4,7 @@ import type { Session } from '@supabase/supabase-js'
 import { AccessGate } from './components/AccessGate'
 import { Login } from './components/Login'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
+import { installUsageErrorTracking } from './lib/usageTracking'
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined)
@@ -45,6 +46,11 @@ export default function App() {
 
     return () => subscription.unsubscribe()
   }, [])
+
+  useEffect(() => {
+    if (!session) return undefined
+    return installUsageErrorTracking()
+  }, [session])
 
   if (!isSupabaseConfigured) {
     return (

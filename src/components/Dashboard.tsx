@@ -14,10 +14,14 @@ import {
 } from 'recharts'
 
 import { aggregateProducts, filterByDate, summarizeSales } from '../lib/analytics'
+import { buildSalesHashHref, parseHashRoute } from '../lib/routes'
+import type { HashRoute } from '../lib/routes'
 import { supabase } from '../lib/supabase'
+import { recordUsageEvent } from '../lib/usageTracking'
 import type { DailyProductSalesRow, DailySalesRow } from '../types'
 import { ProductDetail } from './ProductDetail'
 import { SalesImport } from './SalesImport'
+import { UsageAdmin } from './UsageAdmin'
 import { UserManagement } from './UserManagement'
 
 const PAGE_SIZE = 1_000
@@ -54,32 +58,8 @@ function formatShortDate(value: string) {
   return format(parseISO(value), 'M/d', { locale: ja })
 }
 
-type HashRoute = {
-  productId: string | null
-  isImport: boolean
-  startDate: string
-  endDate: string
-}
-
 function readHashRoute(): HashRoute {
-  const [path, query = ''] = (window.location.hash.slice(1) || '/').split('?')
-  const match = path.match(/^\/products\/([^/]+)$/)
-  const params = new URLSearchParams(query)
-  return {
-    productId: match ? decodeURIComponent(match[1]) : null,
-    isImport: path === '/sales/import',
-    startDate: params.get('from') ?? '',
-    endDate: params.get('to') ?? '',
-  }
-}
-
-function buildHashHref(productId: string | null, startDate: string, endDate: string) {
-  const params = new URLSearchParams()
-  if (startDate) params.set('from', startDate)
-  if (endDate) params.set('to', endDate)
-  const path = productId ? `/products/${encodeURIComponent(productId)}` : '/'
-  const query = params.toString()
-  return `#${path}${query ? `?${query}` : ''}`
+  return parseHashRoute(window.location.hash)
 }
 
 type DashboardProps = {
@@ -96,6 +76,8 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
   const [productRows, setProductRows] = useState<DailyProductSalesRow[]>([])
   const [selectedProductId, setSelectedProductId] = useState<string | null>(initialRoute.productId)
   const [isImportRoute, setIsImportRoute] = useState(initialRoute.isImport)
+  const [isUserManagementRoute, setIsUserManagementRoute] = useState(initialRoute.isUserManagement)
+  const [isUsageAdminRoute, setIsUsageAdminRoute] = useState(initialRoute.isUsageAdmin)
   const [startDate, setStartDate] = useState(initialRoute.startDate)
   const [endDate, setEndDate] = useState(initialRoute.endDate)
   const [appRole, setAppRole] = useState('viewer')
@@ -113,6 +95,8 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
       const route = readHashRoute()
       setSelectedProductId(route.productId)
       setIsImportRoute(route.isImport)
+      setIsUserManagementRoute(route.isUserManagement)
+      setIsUsageAdminRoute(route.isUsageAdmin)
       if (route.startDate) setStartDate(route.startDate)
       if (route.endDate) setEndDate(route.endDate)
     }
@@ -129,17 +113,26 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
       setErrorMessage('')
       try {
         if (!supabase) return
-        const [daily, products, roleResponse] = await Promise.all([
+        const roleResponse = await supabase
+          .from('app_users')
+          .select('app_role, display_name')
+          .eq('user_id', userId)
+          .single()
+        if (roleResponse.error) throw roleResponse.error
+        if (!active) return
+        setAppRole(String(roleResponse.data.app_role))
+        setDisplayName(String(roleResponse.data.display_name))
+
+        const needsSalesData = !isImportRoute && !isUserManagementRoute && !isUsageAdminRoute
+        if (!needsSalesData) return
+
+        const [daily, products] = await Promise.all([
           fetchAllRows<DailySalesRow>('daily_sales_summary'),
           fetchAllRows<DailyProductSalesRow>('daily_product_sales'),
-          supabase.from('app_users').select('app_role, display_name').eq('user_id', userId).single(),
         ])
-        if (roleResponse.error) throw roleResponse.error
         if (!active) return
         setDailyRows(daily)
         setProductRows(products)
-        setAppRole(String(roleResponse.data.app_role))
-        setDisplayName(String(roleResponse.data.display_name))
         if (daily.length) {
           setStartDate((current) => current || daily[0].report_date)
           setEndDate((current) => current || daily[daily.length - 1].report_date)
@@ -159,7 +152,26 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
     return () => {
       active = false
     }
-  }, [refreshKey, userId])
+  }, [isImportRoute, isUsageAdminRoute, isUserManagementRoute, refreshKey, userId])
+
+  useEffect(() => {
+    if (displayName === 'ログインユーザー') return
+    const pagePath = isUsageAdminRoute
+      ? '#/admin/usage'
+      : isUserManagementRoute
+        ? '#/admin/users'
+        : isImportRoute
+          ? '#/sales/import'
+          : selectedProductId
+            ? `#/products/${encodeURIComponent(selectedProductId)}`
+            : '#/'
+    void recordUsageEvent({
+      eventType: 'page_view',
+      pagePath,
+      targetType: selectedProductId ? 'product' : undefined,
+      targetId: selectedProductId ?? undefined,
+    })
+  }, [displayName, isImportRoute, isUsageAdminRoute, isUserManagementRoute, selectedProductId])
 
   const filteredDaily = useMemo(
     () => filterByDate(dailyRows, startDate, endDate),
@@ -192,7 +204,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
   const selectedProductName = productRows.find(
     (row) => row.product_id === selectedProductId,
   )?.canonical_name ?? '商品'
-  const dashboardHref = buildHashHref(null, startDate, endDate)
+  const dashboardHref = buildSalesHashHref(null, startDate, endDate)
 
   function updateDateRange(nextStartDate: string, nextEndDate: string) {
     setStartDate(nextStartDate)
@@ -200,7 +212,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
     window.history.replaceState(
       null,
       '',
-      buildHashHref(selectedProductId, nextStartDate, nextEndDate),
+      buildSalesHashHref(selectedProductId, nextStartDate, nextEndDate),
     )
   }
 
@@ -230,12 +242,15 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
         </a>
         <div className="user-actions">
           {appRole === 'admin' || appRole === 'inputter' ? (
-            <a className="header-link" href={isImportRoute ? dashboardHref : '#/sales/import'}>
-              {isImportRoute ? 'ダッシュボード' : 'データ登録'}
+            <a className={`header-link${isImportRoute ? ' is-active' : ''}`} href="#/sales/import">
+              データ登録
             </a>
           ) : null}
           {appRole === 'admin' ? (
-            <a className="header-link" href="#access-requests">ユーザー管理</a>
+            <>
+              <a className={`header-link${isUserManagementRoute ? ' is-active' : ''}`} href="#/admin/users">ユーザー管理</a>
+              <a className={`header-link${isUsageAdminRoute ? ' is-active' : ''}`} href="#/admin/usage">利用状況</a>
+            </>
           ) : null}
           <span>{displayName}</span>
           <button className="text-button" type="button" onClick={() => void onSignOut()}>
@@ -245,7 +260,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
       </header>
 
       <main className="dashboard-main">
-        <section className="dashboard-heading">
+        {!isUserManagementRoute && !isUsageAdminRoute && <section className="dashboard-heading">
           <div>
             <p className="eyebrow">{isImportRoute ? 'DATA IMPORT' : marketName}</p>
             <h1>
@@ -284,13 +299,22 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
               />
             </label>
           </div>}
-        </section>
+        </section>}
 
-        {isLoading && <div className="status-panel">集計データを読み込んでいます…</div>}
+        {isLoading && <div className="status-panel">画面を読み込んでいます…</div>}
         {errorMessage && <div className="status-panel error" role="alert">{errorMessage}</div>}
 
         {!isLoading && !errorMessage && (
-          isImportRoute ? (
+          isUsageAdminRoute ? (
+            appRole === 'admin'
+              ? <UsageAdmin />
+              : <div className="status-panel error" role="alert">この画面を表示する権限がありません。</div>
+          ) : isUserManagementRoute ? (
+            appRole === 'admin'
+              ? <UserManagement currentUserId={userId} />
+              : <div className="status-panel error" role="alert">この画面を表示する権限がありません。</div>
+          ) : isImportRoute ? (
+            appRole === 'admin' || appRole === 'inputter' ? (
             <SalesImport
               appRole={appRole}
               onImported={(firstDate, lastDate) => {
@@ -299,6 +323,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
                 setRefreshKey((current) => current + 1)
               }}
             />
+            ) : <div className="status-panel error" role="alert">この画面を表示する権限がありません。</div>
           ) : selectedProductId ? (
             <ProductDetail
               productId={selectedProductId}
@@ -443,7 +468,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
                         <td>
                           <a
                             className="product-link"
-                            href={buildHashHref(product.productId, startDate, endDate)}
+                            href={buildSalesHashHref(product.productId, startDate, endDate)}
                           >
                             {product.canonicalName}
                           </a>
@@ -461,9 +486,6 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
           </>
           )
         )}
-        {!isLoading && !errorMessage && appRole === 'admin' ? (
-          <UserManagement currentUserId={userId} />
-        ) : null}
       </main>
     </div>
   )
