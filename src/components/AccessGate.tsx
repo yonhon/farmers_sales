@@ -1,5 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 
+import { resolveAccessState } from '../lib/accessState'
+import type { AccessRequest, AccessState, AppProfile } from '../lib/accessState'
 import { supabase } from '../lib/supabase'
 
 const Dashboard = lazy(() =>
@@ -12,15 +14,6 @@ type AccessGateProps = {
   onSignOut: () => Promise<void>
 }
 
-type AppProfile = {
-  account_status: 'active' | 'suspended'
-}
-
-type AccessRequest = {
-  request_status: 'pending' | 'approved' | 'rejected'
-  verification_code_expires_at: string
-}
-
 type RequestResult = {
   verification_code: string
   expires_at: string
@@ -28,62 +21,102 @@ type RequestResult = {
 }
 
 export function AccessGate({ userId, suggestedDisplayName, onSignOut }: AccessGateProps) {
-  const [profile, setProfile] = useState<AppProfile | null>(null)
-  const [accessRequest, setAccessRequest] = useState<AccessRequest | null>(null)
+  const [accessState, setAccessState] = useState<AccessState>({ kind: 'loading' })
   const [displayName, setDisplayName] = useState(suggestedDisplayName)
   const [verificationCode, setVerificationCode] = useState('')
   const [expiresAt, setExpiresAt] = useState('')
-  const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
-  const loadAccessState = useCallback(async () => {
-    if (!supabase) return
+  const fetchAccessState = useCallback(async () => {
+    if (!supabase) throw new Error('Supabaseが設定されていません。')
+    const client = supabase
 
-    const [profileResponse, requestResponse] = await Promise.all([
-      supabase
-        .from('app_users')
-        .select('account_status')
-        .eq('user_id', userId)
-        .maybeSingle(),
-      supabase
-        .from('access_requests')
-        .select('request_status, verification_code_expires_at')
-        .eq('user_id', userId)
-        .maybeSingle(),
-    ])
-
-    if (profileResponse.error) throw profileResponse.error
-    if (requestResponse.error) throw requestResponse.error
-
-    setProfile(profileResponse.data as AppProfile | null)
-    setAccessRequest(requestResponse.data as AccessRequest | null)
+    return resolveAccessState({
+      getSession: async () => {
+        const { data, error } = await client.auth.getSession()
+        return { hasSession: Boolean(data.session), error }
+      },
+      refreshSession: async () => {
+        const { error } = await client.auth.refreshSession()
+        return { error }
+      },
+      getProfile: async () => {
+        const response = await client
+          .from('app_users')
+          .select('account_status')
+          .eq('user_id', userId)
+          .maybeSingle()
+        return {
+          data: response.data as AppProfile | null,
+          error: response.error,
+        }
+      },
+      getAccessRequest: async () => {
+        const response = await client
+          .from('access_requests')
+          .select('request_status, verification_code_expires_at')
+          .eq('user_id', userId)
+          .maybeSingle()
+        return {
+          data: response.data as AccessRequest | null,
+          error: response.error,
+        }
+      },
+    })
   }, [userId])
 
   useEffect(() => {
     let active = true
 
-    async function load() {
-      try {
-        await loadAccessState()
-      } catch (error) {
+    void fetchAccessState()
+      .then((state) => {
+        if (active) setAccessState(state)
+      })
+      .catch((error) => {
         console.error(error)
-        if (active) setErrorMessage('利用状態を確認できませんでした。時間をおいて再度お試しください。')
-      } finally {
-        if (active) setIsLoading(false)
-      }
-    }
-
-    void load()
-    const timer = window.setInterval(() => {
-      void loadAccessState().catch((error) => console.error(error))
-    }, 15_000)
+        if (active) {
+          setAccessState({
+            kind: 'error',
+            message: '利用状態を確認できませんでした。時間をおいて再度お試しください。',
+          })
+        }
+      })
 
     return () => {
       active = false
-      window.clearInterval(timer)
     }
-  }, [loadAccessState])
+  }, [fetchAccessState])
+
+  const isPending = accessState.kind === 'unregistered'
+    && accessState.request?.request_status === 'pending'
+
+  useEffect(() => {
+    if (!isPending) return undefined
+
+    const timer = window.setInterval(() => {
+      void fetchAccessState()
+        .then((state) => setAccessState(state))
+        .catch((error) => console.error(error))
+    }, 15_000)
+
+    return () => window.clearInterval(timer)
+  }, [fetchAccessState, isPending])
+
+  async function retryAccessState() {
+    setAccessState({ kind: 'loading' })
+    try {
+      const state = await fetchAccessState()
+      setErrorMessage('')
+      setAccessState(state)
+    } catch (error) {
+      console.error(error)
+      setAccessState({
+        kind: 'error',
+        message: '利用状態を確認できませんでした。時間をおいて再度お試しください。',
+      })
+    }
+  }
 
   async function requestAccess() {
     if (!supabase) return
@@ -108,17 +141,20 @@ export function AccessGate({ userId, suggestedDisplayName, onSignOut }: AccessGa
 
     setVerificationCode(result.verification_code)
     setExpiresAt(result.expires_at)
-    setAccessRequest({
-      request_status: 'pending',
-      verification_code_expires_at: result.expires_at,
+    setAccessState({
+      kind: 'unregistered',
+      request: {
+        request_status: 'pending',
+        verification_code_expires_at: result.expires_at,
+      },
     })
   }
 
-  if (isLoading) {
+  if (accessState.kind === 'loading') {
     return <main className="loading-screen">利用状態を確認しています…</main>
   }
 
-  if (profile?.account_status === 'active') {
+  if (accessState.kind === 'active') {
     return (
       <Suspense fallback={<main className="loading-screen">画面を読み込んでいます…</main>}>
         <Dashboard userId={userId} onSignOut={onSignOut} />
@@ -126,7 +162,7 @@ export function AccessGate({ userId, suggestedDisplayName, onSignOut }: AccessGa
     )
   }
 
-  if (profile?.account_status === 'suspended') {
+  if (accessState.kind === 'suspended') {
     return (
       <main className="access-shell">
         <section className="access-card">
@@ -141,7 +177,27 @@ export function AccessGate({ userId, suggestedDisplayName, onSignOut }: AccessGa
     )
   }
 
-  const isPending = accessRequest?.request_status === 'pending'
+  if (accessState.kind === 'error') {
+    return (
+      <main className="access-shell">
+        <section className="access-card">
+          <p className="eyebrow">TEMPORARY ERROR</p>
+          <h1>利用状態を確認できませんでした</h1>
+          <p role="alert">{accessState.message}</p>
+          <div className="access-actions">
+            <button className="primary-button" type="button" onClick={() => void retryAccessState()}>
+              再試行
+            </button>
+            <button className="text-link-button" type="button" onClick={() => void onSignOut()}>
+              ログアウト
+            </button>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
+  const accessRequest = accessState.request
 
   return (
     <main className="access-shell">
@@ -193,7 +249,7 @@ export function AccessGate({ userId, suggestedDisplayName, onSignOut }: AccessGa
           <button
             className="secondary-button"
             type="button"
-            onClick={() => void loadAccessState()}
+            onClick={() => void retryAccessState()}
           >
             承認状態を更新
           </button>
