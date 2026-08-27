@@ -14,6 +14,7 @@ import {
 } from 'recharts'
 
 import { findTopUsageUsers } from '../lib/usageTracking'
+import { formatUsageTarget } from '../lib/usageTargets'
 import { supabase } from '../lib/supabase'
 
 type DailyMetric = {
@@ -80,6 +81,12 @@ type UsageEventRow = {
   outcome: 'success' | 'failure' | null
   error_code: string | null
   message_summary: string | null
+  target_name?: string
+}
+
+type ProductNameRow = {
+  product_id: string
+  canonical_name: string
 }
 
 const integer = new Intl.NumberFormat('ja-JP')
@@ -187,6 +194,25 @@ export function UsageAdmin() {
     const failed = [daily, monthly, dailyUsers, monthlyUsers, users, errors, events].find((response) => response.error)
     if (failed?.error) throw failed.error
 
+    const history = (events.data ?? []) as UsageEventRow[]
+    const productIds = Array.from(new Set(
+      history
+        .filter((event) => event.target_type === 'product' && event.target_id)
+        .map((event) => event.target_id as string),
+    ))
+    const productNames = new Map<string, string>()
+
+    if (productIds.length) {
+      const productResponse = await supabase
+        .from('products')
+        .select('product_id, canonical_name')
+        .in('product_id', productIds)
+      if (productResponse.error) throw productResponse.error
+      for (const product of (productResponse.data ?? []) as ProductNameRow[]) {
+        productNames.set(product.product_id, product.canonical_name)
+      }
+    }
+
     return {
       dailyMetrics: asNumber((daily.data ?? []) as DailyMetric[], ['pv', 'uu', 'action_count', 'error_count']),
       monthlyMetrics: asNumber((monthly.data ?? []) as MonthlyMetric[], ['pv', 'uu', 'action_count', 'error_count']),
@@ -194,7 +220,12 @@ export function UsageAdmin() {
       monthlyUserPv: asNumber((monthlyUsers.data ?? []) as MonthlyUserPv[], ['pv']),
       userSummaries: asNumber((users.data ?? []) as UserSummary[], ['pv_7d', 'pv_30d', 'actions_30d', 'errors_30d']),
       latestErrors: asNumber((errors.data ?? []) as LatestError[], ['count_7d']),
-      history: (events.data ?? []) as UsageEventRow[],
+      history: history.map((event) => ({
+        ...event,
+        target_name: event.target_type === 'product' && event.target_id
+          ? productNames.get(event.target_id)
+          : undefined,
+      })),
       historyCount: events.count ?? 0,
     }
   }, [days, eventFilter, historyPage, originFilter, reloadKey, userFilter])
@@ -395,7 +426,7 @@ export function UsageAdmin() {
                     <tr key={event.event_id}>
                       <td>{formatJst(event.event_at)}</td><td>{event.display_name_snapshot}</td><td>{eventLabel(event.event_type)}</td><td><span className={`origin-badge ${event.event_origin}`}>{originLabel(event.event_origin)}</span></td><td>{event.page_path}</td>
                       <td>{event.action_name ?? event.error_code ?? '—'}{event.message_summary ? <small className="history-message">{event.message_summary}</small> : null}</td>
-                      <td>{event.target_type ? `${event.target_type}${event.target_id ? `: ${event.target_id}` : ''}` : '—'}</td>
+                      <td>{formatUsageTarget(event.target_type, event.target_id, event.target_name)}</td>
                       <td>{event.outcome === 'success' ? '成功' : event.outcome === 'failure' ? '失敗' : '—'}</td>
                     </tr>
                   ))}
