@@ -1,10 +1,14 @@
 import type {
   DailyProductSalesRow,
+  DailyProductShipmentBalanceRow,
+  DailyProductWeightedPriceRow,
   DailySalesRow,
   ProductDailySeriesRow,
   ProductAnalysisSummary,
   ProductSummary,
   SalesSummary,
+  ShipmentBalanceSeriesRow,
+  WeightedKgPriceSummary,
   WeekdaySummary,
 } from '../types'
 import { getDay, parseISO } from 'date-fns'
@@ -193,4 +197,51 @@ export function buildProductDailySeries(
         : null,
     }
   })
+}
+
+export function summarizeWeightedKgPrices(
+  rows: DailyProductWeightedPriceRow[],
+): WeightedKgPriceSummary {
+  const summary = rows.reduce(
+    (current, row) => ({
+      soldWeightKg: current.soldWeightKg + Number(row.sold_weight_kg || 0),
+      convertedNetSalesYen:
+        current.convertedNetSalesYen + Number(row.converted_net_sales_yen || 0),
+      unconvertedPackageQuantity:
+        current.unconvertedPackageQuantity + Number(row.unconverted_package_quantity || 0),
+      usesStandardWeight: current.usesStandardWeight || Boolean(row.uses_standard_weight),
+    }),
+    {
+      soldWeightKg: 0,
+      convertedNetSalesYen: 0,
+      unconvertedPackageQuantity: 0,
+      usesStandardWeight: false,
+    },
+  )
+
+  return {
+    ...summary,
+    averageKgUnitRevenueYen: summary.soldWeightKg
+      ? Math.round(summary.convertedNetSalesYen / summary.soldWeightKg)
+      : null,
+  }
+}
+
+export function buildShipmentBalanceSeries(
+  rows: DailyProductShipmentBalanceRow[],
+): ShipmentBalanceSeriesRow[] {
+  return [...rows]
+    .sort((left, right) => left.shipment_date.localeCompare(right.shipment_date))
+    .map((row) => {
+      const shipmentQuantity = Number(row.shipment_package_quantity)
+      const remainingQuantity = Number(row.remaining_package_quantity)
+      return {
+        shipment_date: row.shipment_date,
+        shipment_package_quantity: shipmentQuantity,
+        allocated_package_quantity: Number(row.allocated_package_quantity),
+        remaining_package_quantity: remainingQuantity,
+        remaining_rate: shipmentQuantity ? remainingQuantity / shipmentQuantity : 0,
+        sales_data_through_date: row.sales_data_through_date,
+      }
+    })
 }

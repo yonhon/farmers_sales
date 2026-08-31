@@ -4,12 +4,19 @@ import {
   aggregateProducts,
   aggregateWeekdays,
   buildProductDailySeries,
+  buildShipmentBalanceSeries,
   calculateChangeRate,
   filterByDate,
   summarizeProduct,
   summarizeSales,
+  summarizeWeightedKgPrices,
 } from './analytics'
-import type { DailyProductSalesRow, DailySalesRow } from '../types'
+import type {
+  DailyProductSalesRow,
+  DailyProductShipmentBalanceRow,
+  DailyProductWeightedPriceRow,
+  DailySalesRow,
+} from '../types'
 
 const dailyRows: DailySalesRow[] = [
   {
@@ -261,5 +268,73 @@ describe('analytics helpers', () => {
       average_unit_revenue_yen: null,
     })
     expect(result[3].average_unit_revenue_yen).toBe(300)
+  })
+})
+
+describe('shipment analytics', () => {
+  it('calculates the period kg price from total revenue and total weight', () => {
+    const rows: DailyProductWeightedPriceRow[] = [
+      {
+        report_date: '2026-07-14',
+        product_id: 'product-a',
+        canonical_name: 'オクラ',
+        converted_package_quantity: 2,
+        sold_weight_kg: 0.2,
+        converted_net_sales_yen: 300,
+        average_kg_unit_revenue_yen: 1500,
+        unconverted_package_quantity: 0,
+        uses_standard_weight: false,
+      },
+      {
+        report_date: '2026-07-15',
+        product_id: 'product-a',
+        canonical_name: 'オクラ',
+        converted_package_quantity: 4,
+        sold_weight_kg: 0.8,
+        converted_net_sales_yen: 800,
+        average_kg_unit_revenue_yen: 1000,
+        unconverted_package_quantity: 1,
+        uses_standard_weight: true,
+      },
+    ]
+
+    expect(summarizeWeightedKgPrices(rows)).toEqual({
+      soldWeightKg: 1,
+      convertedNetSalesYen: 1100,
+      averageKgUnitRevenueYen: 1100,
+      unconvertedPackageQuantity: 1,
+      usesStandardWeight: true,
+    })
+  })
+
+  it('sorts shipment dates and calculates remaining rates', () => {
+    const rows: DailyProductShipmentBalanceRow[] = [
+      {
+        shipment_date: '2026-07-15',
+        product_id: 'product-a',
+        canonical_name: 'オクラ',
+        shipment_package_quantity: 20,
+        allocated_package_quantity: 15,
+        remaining_package_quantity: 5,
+        sell_through_rate: 0.75,
+        shipment_lot_count: 1,
+        sales_data_through_date: '2026-07-20',
+      },
+      {
+        shipment_date: '2026-07-14',
+        product_id: 'product-a',
+        canonical_name: 'オクラ',
+        shipment_package_quantity: 10,
+        allocated_package_quantity: 4,
+        remaining_package_quantity: 6,
+        sell_through_rate: 0.4,
+        shipment_lot_count: 1,
+        sales_data_through_date: '2026-07-20',
+      },
+    ]
+
+    const result = buildShipmentBalanceSeries(rows)
+    expect(result.map((row) => row.shipment_date)).toEqual(['2026-07-14', '2026-07-15'])
+    expect(result[0].remaining_rate).toBe(0.6)
   })
 })
