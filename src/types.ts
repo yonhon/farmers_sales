@@ -68,6 +68,14 @@ export type ProductDailySeriesRow = {
   average_unit_revenue_yen: number | null
 }
 
+export type WeightStandardDetail = {
+  grams_per_unit: number
+  unit_code: string
+  confidence: 'measured' | 'reference' | 'estimated'
+  source: string
+  notes: string | null
+}
+
 export type DailyProductWeightedPriceRow = {
   report_date: string
   product_id: string
@@ -78,6 +86,7 @@ export type DailyProductWeightedPriceRow = {
   average_kg_unit_revenue_yen: number | null
   unconverted_package_quantity: number
   uses_standard_weight: boolean | null
+  weight_standard_details: WeightStandardDetail[]
 }
 
 export type DailyProductShipmentBalanceRow = {
@@ -98,6 +107,7 @@ export type WeightedKgPriceSummary = {
   averageKgUnitRevenueYen: number | null
   unconvertedPackageQuantity: number
   usesStandardWeight: boolean
+  weightStandardDetails: WeightStandardDetail[]
 }
 
 export type ShipmentBalanceSeriesRow = {

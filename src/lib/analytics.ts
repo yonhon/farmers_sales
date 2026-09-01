@@ -8,6 +8,7 @@ import type {
   ProductSummary,
   SalesSummary,
   ShipmentBalanceSeriesRow,
+  WeightStandardDetail,
   WeightedKgPriceSummary,
   WeekdaySummary,
 } from '../types'
@@ -219,11 +220,34 @@ export function summarizeWeightedKgPrices(
     },
   )
 
+  const weightStandardDetails = Array.from(rows.reduce((details, row) => {
+    for (const detail of row.weight_standard_details ?? []) {
+      const normalizedDetail: WeightStandardDetail = {
+        ...detail,
+        grams_per_unit: Number(detail.grams_per_unit),
+      }
+      const key = [
+        normalizedDetail.grams_per_unit,
+        normalizedDetail.unit_code,
+        normalizedDetail.confidence,
+        normalizedDetail.source,
+        normalizedDetail.notes ?? '',
+      ].join('\u0000')
+      details.set(key, normalizedDetail)
+    }
+    return details
+  }, new Map<string, WeightStandardDetail>()).values()).sort((left, right) => (
+    left.grams_per_unit - right.grams_per_unit
+      || left.unit_code.localeCompare(right.unit_code)
+      || left.source.localeCompare(right.source)
+  ))
+
   return {
     ...summary,
     averageKgUnitRevenueYen: summary.soldWeightKg
       ? Math.round(summary.convertedNetSalesYen / summary.soldWeightKg)
       : null,
+    weightStandardDetails,
   }
 }
 

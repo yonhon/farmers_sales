@@ -48,6 +48,7 @@ const yen = new Intl.NumberFormat('ja-JP', {
 const integer = new Intl.NumberFormat('ja-JP')
 const decimal = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 1 })
 const weight = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 2 })
+const standardWeight = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 3 })
 const percent = new Intl.NumberFormat('ja-JP', {
   style: 'percent',
   maximumFractionDigits: 1,
@@ -141,6 +142,18 @@ function formatChange(value: number | null) {
   if (value === null) return '比較不可'
   const sign = value > 0 ? '+' : ''
   return `${sign}${percent.format(value)}`
+}
+
+function formatWeightStandardUnit(unitCode: string) {
+  if (unitCode === 'piece') return '個'
+  if (unitCode === 'sheet') return '枚'
+  return unitCode
+}
+
+function formatWeightStandardConfidence(confidence: 'measured' | 'reference' | 'estimated') {
+  if (confidence === 'estimated') return '暫定'
+  if (confidence === 'reference') return '参考'
+  return '実測'
 }
 
 export function ProductDetail({
@@ -562,11 +575,24 @@ export function ProductDetail({
                 )}
               </div>
               <p className="data-note">
-                純売上 ÷ FIFOで対応付けた販売重量。換算済み重量は
+                平均kg単価は、FIFOで対応付けた純売上を販売重量で割って算出しています。換算済み重量は
                 {weight.format(kgSummary.soldWeightKg)}kgです。
-                {kgSummary.usesStandardWeight && ' 個・枚単位には品目別の標準重量を使用した推計値を含みます。'}
+                {kgSummary.weightStandardDetails.map((detail) => (
+                  <span key={[
+                    detail.grams_per_unit,
+                    detail.unit_code,
+                    detail.confidence,
+                    detail.source,
+                    detail.notes ?? '',
+                  ].join('-')}
+                  >
+                    {' '}
+                    {`${productName}には、登録済みの${formatWeightStandardConfidence(detail.confidence)}標準重量${standardWeight.format(detail.grams_per_unit)}g/${formatWeightStandardUnit(detail.unit_code)}を使用しています。`}
+                    {detail.notes && ` ${detail.notes}`}
+                  </span>
+                ))}
                 {kgSummary.unconvertedPackageQuantity > 0
-                  && ` 標準重量未登録の${decimal.format(kgSummary.unconvertedPackageQuantity)}袋は計算対象外です。`}
+                  && ` 内容量または標準重量を確認できない${decimal.format(kgSummary.unconvertedPackageQuantity)}袋は計算対象外です。`}
               </p>
             </article>
 

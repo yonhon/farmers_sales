@@ -284,6 +284,7 @@ describe('shipment analytics', () => {
         average_kg_unit_revenue_yen: 1500,
         unconverted_package_quantity: 0,
         uses_standard_weight: false,
+        weight_standard_details: [],
       },
       {
         report_date: '2026-07-15',
@@ -295,6 +296,15 @@ describe('shipment analytics', () => {
         average_kg_unit_revenue_yen: 1000,
         unconverted_package_quantity: 1,
         uses_standard_weight: true,
+        weight_standard_details: [
+          {
+            grams_per_unit: 166.667,
+            unit_code: 'piece',
+            confidence: 'estimated',
+            source: '山形県青果物等標準出荷規格集（令和8年4月）',
+            notes: '実際の出荷サイズは確認できないため、Mサイズを代表値として換算しています。',
+          },
+        ],
       },
     ]
 
@@ -304,6 +314,15 @@ describe('shipment analytics', () => {
       averageKgUnitRevenueYen: 1100,
       unconvertedPackageQuantity: 1,
       usesStandardWeight: true,
+      weightStandardDetails: [
+        {
+          grams_per_unit: 166.667,
+          unit_code: 'piece',
+          confidence: 'estimated',
+          source: '山形県青果物等標準出荷規格集（令和8年4月）',
+          notes: '実際の出荷サイズは確認できないため、Mサイズを代表値として換算しています。',
+        },
+      ],
     })
   })
 
