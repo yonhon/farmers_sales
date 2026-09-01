@@ -45,6 +45,30 @@ export type ParseSalesResult = {
   isValid: boolean
 }
 
+export function formatSalesImportError(error: unknown) {
+  if (error instanceof Error && error.message) return error.message
+  if (error && typeof error === 'object') {
+    const value = error as Record<string, unknown>
+    const message = typeof value.message === 'string' ? value.message : ''
+    const details = typeof value.details === 'string' ? value.details : ''
+    const hint = typeof value.hint === 'string' ? value.hint : ''
+    const code = typeof value.code === 'string' ? value.code : ''
+    const parts = [
+      message,
+      details && details !== message ? `詳細: ${details}` : '',
+      hint ? `対応: ${hint}` : '',
+      code ? `コード: ${code}` : '',
+    ].filter(Boolean)
+    if (parts.length > 0) return parts.join(' / ')
+    try {
+      return JSON.stringify(error)
+    } catch {
+      return '不明なエラー'
+    }
+  }
+  return String(error)
+}
+
 type WorkingReport = Omit<
   ParsedSalesReport,
   'calculated_sold_quantity' | 'calculated_net_sales_yen' | 'isValid'

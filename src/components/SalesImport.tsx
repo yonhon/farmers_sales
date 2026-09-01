@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import {
+  formatSalesImportError,
   hashSalesSource,
   normalizeProductName,
   parseSalesText,
@@ -39,6 +40,11 @@ type ImportResult = {
   inserted_reports: number
   inserted_lines: number
   skipped_reports: number
+  shipment_allocation_refresh?: {
+    status?: 'ok' | 'failed'
+    message?: string
+    error_code?: string
+  }
 }
 
 type SalesImportProps = {
@@ -255,7 +261,7 @@ export function SalesImport({ appRole, onImported }: SalesImportProps) {
       onImported(dates[0], dates[dates.length - 1])
     } catch (error) {
       console.error(error)
-      const message = error instanceof Error ? error.message : String(error)
+      const message = formatSalesImportError(error)
       void recordUsageEvent({
         eventType: 'action',
         actionName: 'sales_import_failed',
@@ -496,6 +502,15 @@ export function SalesImport({ appRole, onImported }: SalesImportProps) {
             新規報告 {importResult.inserted_reports}件、明細 {importResult.inserted_lines}件、
             登録済みスキップ {importResult.skipped_reports}件
           </p>
+          {importResult.shipment_allocation_refresh?.status === 'failed' && (
+            <p className="form-error">
+              売上は登録されましたが、出荷との再集計に失敗しました：
+              {importResult.shipment_allocation_refresh.message ?? '詳細不明'}
+              {importResult.shipment_allocation_refresh.error_code
+                ? `（${importResult.shipment_allocation_refresh.error_code}）`
+                : ''}
+            </p>
+          )}
           {parseResult && (
             <a
               className="primary-button result-link"

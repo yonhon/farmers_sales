@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { normalizeProductName, parseSalesText } from './salesImport'
+import { formatSalesImportError, normalizeProductName, parseSalesText } from './salesImport'
 
 const sample = `08/24 18:30 売上状況
 県立農業大学校様
@@ -101,6 +101,26 @@ const sample = `08/24 18:30 売上状況
 ★ 合 計 ★
 売 127 ￥32,628`
 
+const august31Sample = `08/31 18:30 売上状況
+県立農業大学校様
+《やんばる市場》
+大葉
+@108 売 7
+キュウリ
+@324 売 19
+ゴーヤー
+@324 売 14
+@540 売 12
+ミニトマト
+@216 売 6
+オクラ
+@108 売 26
+@150 売 52
+ズッキーニ
+@270 売 4
+★ 合 計 ★
+売 140 ￥30,912`
+
 describe('sales paste parser', () => {
   it('parses the supplied four-day sample', () => {
     const result = parseSalesText(sample, 2026)
@@ -121,6 +141,28 @@ describe('sales paste parser', () => {
     })
     expect(result.reports[0].lines.filter((line) => line.raw_product_name === 'ゴーヤー'))
       .toHaveLength(2)
+  })
+
+  it('parses the August 31 report that failed during registration', () => {
+    const result = parseSalesText(august31Sample, 2026)
+
+    expect(result.isValid).toBe(true)
+    expect(result.issues).toEqual([])
+    expect(result.reportCount).toBe(1)
+    expect(result.lineCount).toBe(8)
+    expect(result.soldQuantity).toBe(140)
+    expect(result.netSalesYen).toBe(30_912)
+  })
+
+  it('formats Supabase error objects without losing their message', () => {
+    expect(formatSalesImportError({
+      message: 'Database rejected the report',
+      details: 'A constraint failed',
+      hint: 'Check the report date',
+      code: '23514',
+    })).toBe(
+      'Database rejected the report / 詳細: A constraint failed / 対応: Check the report date / コード: 23514',
+    )
   })
 
   it('normalizes product parentheses without merging varieties', () => {
