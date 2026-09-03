@@ -1,6 +1,7 @@
 export type HashRoute = {
   productId: string | null
   isImport: boolean
+  isShipmentReview: boolean
   isUserManagement: boolean
   isUsageAdmin: boolean
   startDate: string
@@ -49,6 +50,7 @@ export function parseHashRoute(hash: string): HashRoute {
   return {
     productId: hasValidProductRoute ? decodedProductId : null,
     isImport: path === '/sales/import',
+    isShipmentReview: path === '/shipments/review',
     isUserManagement: path === '/admin/users',
     isUsageAdmin: path === '/admin/usage',
     startDate,

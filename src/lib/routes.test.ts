@@ -7,6 +7,7 @@ describe('application hash routes', () => {
     expect(parseHashRoute('#/admin/users').isUserManagement).toBe(true)
     expect(parseHashRoute('#/admin/usage').isUsageAdmin).toBe(true)
     expect(parseHashRoute('#/sales/import').isImport).toBe(true)
+    expect(parseHashRoute('#/shipments/review').isShipmentReview).toBe(true)
   })
 
   it('round-trips product and date filters', () => {

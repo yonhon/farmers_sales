@@ -21,6 +21,7 @@ import { recordUsageEvent } from '../lib/usageTracking'
 import type { DailyProductSalesRow, DailySalesRow } from '../types'
 import { ProductDetail } from './ProductDetail'
 import { SalesImport } from './SalesImport'
+import { ShipmentReview } from './ShipmentReview'
 import { UsageAdmin } from './UsageAdmin'
 import { UserManagement } from './UserManagement'
 
@@ -76,6 +77,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
   const [productRows, setProductRows] = useState<DailyProductSalesRow[]>([])
   const [selectedProductId, setSelectedProductId] = useState<string | null>(initialRoute.productId)
   const [isImportRoute, setIsImportRoute] = useState(initialRoute.isImport)
+  const [isShipmentReviewRoute, setIsShipmentReviewRoute] = useState(initialRoute.isShipmentReview)
   const [isUserManagementRoute, setIsUserManagementRoute] = useState(initialRoute.isUserManagement)
   const [isUsageAdminRoute, setIsUsageAdminRoute] = useState(initialRoute.isUsageAdmin)
   const [startDate, setStartDate] = useState(initialRoute.startDate)
@@ -95,6 +97,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
       const route = readHashRoute()
       setSelectedProductId(route.productId)
       setIsImportRoute(route.isImport)
+      setIsShipmentReviewRoute(route.isShipmentReview)
       setIsUserManagementRoute(route.isUserManagement)
       setIsUsageAdminRoute(route.isUsageAdmin)
       if (route.startDate) setStartDate(route.startDate)
@@ -123,7 +126,10 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
         setAppRole(String(roleResponse.data.app_role))
         setDisplayName(String(roleResponse.data.display_name))
 
-        const needsSalesData = !isImportRoute && !isUserManagementRoute && !isUsageAdminRoute
+        const needsSalesData = !isImportRoute
+          && !isShipmentReviewRoute
+          && !isUserManagementRoute
+          && !isUsageAdminRoute
         if (!needsSalesData) return
 
         const [daily, products] = await Promise.all([
@@ -152,7 +158,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
     return () => {
       active = false
     }
-  }, [isImportRoute, isUsageAdminRoute, isUserManagementRoute, refreshKey, userId])
+  }, [isImportRoute, isShipmentReviewRoute, isUsageAdminRoute, isUserManagementRoute, refreshKey, userId])
 
   useEffect(() => {
     if (displayName === 'ログインユーザー') return
@@ -160,6 +166,8 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
       ? '#/admin/usage'
       : isUserManagementRoute
         ? '#/admin/users'
+        : isShipmentReviewRoute
+          ? '#/shipments/review'
         : isImportRoute
           ? '#/sales/import'
           : selectedProductId
@@ -171,7 +179,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
       targetType: selectedProductId ? 'product' : undefined,
       targetId: selectedProductId ?? undefined,
     })
-  }, [displayName, isImportRoute, isUsageAdminRoute, isUserManagementRoute, selectedProductId])
+  }, [displayName, isImportRoute, isShipmentReviewRoute, isUsageAdminRoute, isUserManagementRoute, selectedProductId])
 
   const filteredDaily = useMemo(
     () => filterByDate(dailyRows, startDate, endDate),
@@ -242,9 +250,14 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
         </a>
         <div className="user-actions">
           {appRole === 'admin' || appRole === 'inputter' ? (
-            <a className={`header-link${isImportRoute ? ' is-active' : ''}`} href="#/sales/import">
-              データ登録
-            </a>
+            <>
+              <a className={`header-link${isShipmentReviewRoute ? ' is-active' : ''}`} href="#/shipments/review">
+                出荷確認
+              </a>
+              <a className={`header-link${isImportRoute ? ' is-active' : ''}`} href="#/sales/import">
+                データ登録
+              </a>
+            </>
           ) : null}
           {appRole === 'admin' ? (
             <>
@@ -262,21 +275,27 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
       <main className="dashboard-main">
         {!isUserManagementRoute && !isUsageAdminRoute && <section className="dashboard-heading">
           <div>
-            <p className="eyebrow">{isImportRoute ? 'DATA IMPORT' : marketName}</p>
+            <p className="eyebrow">
+              {isShipmentReviewRoute ? 'SHIPMENT REVIEW' : isImportRoute ? 'DATA IMPORT' : marketName}
+            </p>
             <h1>
-              {isImportRoute
+              {isShipmentReviewRoute
+                ? '出荷データを確認'
+                : isImportRoute
                 ? '売上状況を一括登録'
                 : selectedProductId ? `${selectedProductName}の販売状況` : '全体の販売状況'}
             </h1>
             <p className="muted">
-              {isImportRoute
+              {isShipmentReviewRoute
+                ? '原画像と転記値を一巡で照合し、各行を承認・保留・出荷なしに分類します。'
+                : isImportRoute
                 ? '対象年を選び、複数日分の売上状況をそのまま貼り付けてください。'
                 : selectedProductId
                 ? '販売実績の推移と曜日傾向を、選択した期間で確認できます。'
                 : '日々の販売量と売上を、商品ごとに見渡せます。'}
             </p>
           </div>
-          {!isImportRoute && <div className="date-filter" aria-label="表示期間">
+          {!isImportRoute && !isShipmentReviewRoute && <div className="date-filter" aria-label="表示期間">
             <label>
               開始日
               <input
@@ -312,6 +331,10 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
           ) : isUserManagementRoute ? (
             appRole === 'admin'
               ? <UserManagement currentUserId={userId} />
+              : <div className="status-panel error" role="alert">この画面を表示する権限がありません。</div>
+          ) : isShipmentReviewRoute ? (
+            appRole === 'admin' || appRole === 'inputter'
+              ? <ShipmentReview />
               : <div className="status-panel error" role="alert">この画面を表示する権限がありません。</div>
           ) : isImportRoute ? (
             appRole === 'admin' || appRole === 'inputter' ? (
