@@ -34,6 +34,19 @@ npm run dev
 
 Supabase AuthにはIdentifierが`custom:line-oauth`のCustom OAuth2 Provider（Manual configuration）が必要です。LINE Channel secretはSupabase Dashboardだけに保存し、この公開リポジトリやGitHub Actions Variablesへ登録しないでください。DB migrationとLINE Developers Consoleを含む設定手順は、非公開データプラットフォーム側の`docs/supabase_setup.md`を参照してください。
 
+## 出荷確認（最小確認画面）
+
+`admin`または`inputter`でログインすると、ヘッダーの「出荷確認」から `#/shipments/review` を開けます。この画面は手書き出荷画像と転記CSVを同じ画面で照合し、各行を修正して「承認」「保留」「出荷なし」に分類するためのローカル確認ツールです。
+
+- 月別の未確認CSVと対応する原画像をブラウザから選択する
+- 行番号と画像を並べて確認し、必要な値を修正する
+- 承認後に訂正した場合は、訂正内容でもう一度承認する
+- 未確認または保留が残る間は、確認済みCSVを出力できない
+- 「出荷なし」の行は確認済みCSVから除外される
+- 作業途中の値と進捗はブラウザのローカルストレージへ保存される
+
+選択した画像とCSVはSupabaseや外部APIへ送信されず、この画面から本番DBへの書き込みも行いません。確認済みCSVの検証、正規化、SQL生成、Supabase投入は、非公開データプラットフォーム側の月次運用として実施します。
+
 ## GitHub Pages
 
 リポジトリのSettingsで次を設定します。
