@@ -7,11 +7,13 @@ import {
   buildShipmentBalanceSeries,
   calculateChangeRate,
   filterByDate,
+  mergeKgPriceSeries,
   summarizeProduct,
   summarizeSales,
   summarizeWeightedKgPrices,
 } from './analytics'
 import type {
+  DailyProductMarketPriceRow,
   DailyProductSalesRow,
   DailyProductShipmentBalanceRow,
   DailyProductWeightedPriceRow,
@@ -355,5 +357,54 @@ describe('shipment analytics', () => {
     const result = buildShipmentBalanceSeries(rows)
     expect(result.map((row) => row.shipment_date)).toEqual(['2026-07-14', '2026-07-15'])
     expect(result[0].remaining_rate).toBe(0.6)
+  })
+
+  it('merges self and market kg prices over the union of report dates', () => {
+    const weightedRows: DailyProductWeightedPriceRow[] = [
+      {
+        report_date: '2026-09-02',
+        product_id: 'product-a',
+        canonical_name: 'オクラ',
+        converted_package_quantity: 2,
+        sold_weight_kg: 0.4,
+        converted_net_sales_yen: 400,
+        average_kg_unit_revenue_yen: 1000,
+        unconverted_package_quantity: 0,
+        uses_standard_weight: false,
+        weight_standard_details: [],
+      },
+    ]
+    const marketRows: DailyProductMarketPriceRow[] = [
+      {
+        report_date: '2026-09-01',
+        product_id: 'product-a',
+        canonical_name: 'オクラ',
+        source_code: 'okinawa_kyodo_seika',
+        market_item_name: 'オクラ',
+        mapping_type: 'exact',
+        market_quantity_kg: 281.12,
+        market_high_price_yen_per_kg: 1620,
+        market_mid_price_yen_per_kg: 1051,
+        market_low_price_yen_per_kg: 540,
+        synced_at: '2026-09-01T08:00:00Z',
+      },
+    ]
+
+    expect(mergeKgPriceSeries(weightedRows, marketRows)).toEqual([
+      {
+        report_date: '2026-09-01',
+        average_kg_unit_revenue_yen: null,
+        market_mid_price_yen_per_kg: 1051,
+        market_high_price_yen_per_kg: 1620,
+        market_low_price_yen_per_kg: 540,
+      },
+      {
+        report_date: '2026-09-02',
+        average_kg_unit_revenue_yen: 1000,
+        market_mid_price_yen_per_kg: null,
+        market_high_price_yen_per_kg: null,
+        market_low_price_yen_per_kg: null,
+      },
+    ])
   })
 })

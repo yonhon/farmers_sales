@@ -89,6 +89,28 @@ export type DailyProductWeightedPriceRow = {
   weight_standard_details: WeightStandardDetail[]
 }
 
+export type DailyProductMarketPriceRow = {
+  report_date: string
+  product_id: string
+  canonical_name: string
+  source_code: string
+  market_item_name: string
+  mapping_type: 'exact' | 'script_variant' | 'spelling_variant' | 'base_name' | 'category_mapping'
+  market_quantity_kg: number
+  market_high_price_yen_per_kg: number | null
+  market_mid_price_yen_per_kg: number | null
+  market_low_price_yen_per_kg: number | null
+  synced_at: string
+}
+
+export type KgPriceSeriesRow = {
+  report_date: string
+  average_kg_unit_revenue_yen: number | null
+  market_mid_price_yen_per_kg: number | null
+  market_high_price_yen_per_kg: number | null
+  market_low_price_yen_per_kg: number | null
+}
+
 export type DailyProductShipmentBalanceRow = {
   shipment_date: string
   product_id: string

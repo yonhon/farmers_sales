@@ -380,6 +380,11 @@ tbody tr:last-child td { border-bottom: 0; }
 .comparison-strip span { display: block; margin-bottom: 6px; color: var(--ink-muted); font-size: 0.7rem; }
 .comparison-strip strong { color: var(--forest); font-size: 0.94rem; }
 .data-note { margin: 12px 16px 16px; color: var(--ink-muted); font-size: 0.74rem; line-height: 1.6; }
+.market-data-caption {
+  margin-bottom: -6px;
+  color: #9a4f2c;
+  font-weight: 700;
+}
 
 .sales-import { display: grid; gap: 20px; }
 .import-entry-panel { display: grid; gap: 18px; }

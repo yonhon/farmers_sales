@@ -1,8 +1,10 @@
 import type {
+  DailyProductMarketPriceRow,
   DailyProductSalesRow,
   DailyProductShipmentBalanceRow,
   DailyProductWeightedPriceRow,
   DailySalesRow,
+  KgPriceSeriesRow,
   ProductDailySeriesRow,
   ProductAnalysisSummary,
   ProductSummary,
@@ -249,6 +251,46 @@ export function summarizeWeightedKgPrices(
       : null,
     weightStandardDetails,
   }
+}
+
+export function mergeKgPriceSeries(
+  weightedPriceRows: DailyProductWeightedPriceRow[],
+  marketPriceRows: DailyProductMarketPriceRow[],
+): KgPriceSeriesRow[] {
+  const rowsByDate = new Map<string, KgPriceSeriesRow>()
+
+  for (const row of weightedPriceRows) {
+    rowsByDate.set(row.report_date, {
+      report_date: row.report_date,
+      average_kg_unit_revenue_yen: row.average_kg_unit_revenue_yen === null
+        ? null
+        : Number(row.average_kg_unit_revenue_yen),
+      market_mid_price_yen_per_kg: null,
+      market_high_price_yen_per_kg: null,
+      market_low_price_yen_per_kg: null,
+    })
+  }
+
+  for (const row of marketPriceRows) {
+    const existing = rowsByDate.get(row.report_date)
+    rowsByDate.set(row.report_date, {
+      report_date: row.report_date,
+      average_kg_unit_revenue_yen: existing?.average_kg_unit_revenue_yen ?? null,
+      market_mid_price_yen_per_kg: row.market_mid_price_yen_per_kg === null
+        ? null
+        : Number(row.market_mid_price_yen_per_kg),
+      market_high_price_yen_per_kg: row.market_high_price_yen_per_kg === null
+        ? null
+        : Number(row.market_high_price_yen_per_kg),
+      market_low_price_yen_per_kg: row.market_low_price_yen_per_kg === null
+        ? null
+        : Number(row.market_low_price_yen_per_kg),
+    })
+  }
+
+  return [...rowsByDate.values()].sort((left, right) => (
+    left.report_date.localeCompare(right.report_date)
+  ))
 }
 
 export function buildShipmentBalanceSeries(

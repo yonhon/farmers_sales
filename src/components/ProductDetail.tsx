@@ -15,6 +15,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  Legend,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -28,11 +29,13 @@ import {
   buildShipmentBalanceSeries,
   calculateChangeRate,
   filterByDate,
+  mergeKgPriceSeries,
   summarizeProduct,
   summarizeWeightedKgPrices,
 } from '../lib/analytics'
 import { supabase } from '../lib/supabase'
 import type {
+  DailyProductMarketPriceRow,
   DailyProductSalesRow,
   DailyProductShipmentBalanceRow,
   DailyProductWeightedPriceRow,
@@ -111,6 +114,25 @@ async function fetchWeightedPriceRows(
   return (data ?? []) as DailyProductWeightedPriceRow[]
 }
 
+async function fetchMarketPriceRows(
+  productId: string,
+  startDate: string,
+  endDate: string,
+): Promise<DailyProductMarketPriceRow[]> {
+  if (!supabase) return []
+  const { data, error } = await supabase
+    .schema('analytics')
+    .from('daily_product_market_prices')
+    .select('*')
+    .eq('product_id', productId)
+    .gte('report_date', startDate)
+    .lte('report_date', endDate)
+    .order('report_date', { ascending: true })
+
+  if (error) throw error
+  return (data ?? []) as DailyProductMarketPriceRow[]
+}
+
 async function fetchShipmentBalanceRows(
   productId: string,
   startDate: string,
@@ -168,6 +190,7 @@ export function ProductDetail({
 }: ProductDetailProps) {
   const [rows, setRows] = useState<DailyProductSalesRow[]>([])
   const [weightedPriceRows, setWeightedPriceRows] = useState<DailyProductWeightedPriceRow[]>([])
+  const [marketPriceRows, setMarketPriceRows] = useState<DailyProductMarketPriceRow[]>([])
   const [shipmentBalanceRows, setShipmentBalanceRows] = useState<DailyProductShipmentBalanceRow[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
@@ -197,14 +220,21 @@ export function ProductDetail({
       setIsLoading(true)
       setErrorMessage('')
       try {
-        const [productRows, nextWeightedPriceRows, nextShipmentBalanceRows] = await Promise.all([
+        const [
+          productRows,
+          nextWeightedPriceRows,
+          nextMarketPriceRows,
+          nextShipmentBalanceRows,
+        ] = await Promise.all([
           fetchProductRows(productId, previousStart, endDate),
           fetchWeightedPriceRows(productId, startDate, endDate),
+          fetchMarketPriceRows(productId, startDate, endDate),
           fetchShipmentBalanceRows(productId, startDate, endDate),
         ])
         if (active) {
           setRows(productRows)
           setWeightedPriceRows(nextWeightedPriceRows)
+          setMarketPriceRows(nextMarketPriceRows)
           setShipmentBalanceRows(nextShipmentBalanceRows)
         }
       } catch (error) {
@@ -255,23 +285,32 @@ export function ProductDetail({
     return [Math.max(0, minimum - padding), maximum + padding]
   }, [priceValues])
   const kgChartRows = useMemo(
-    () => weightedPriceRows.map((row) => ({
-      ...row,
-      average_kg_unit_revenue_yen: row.average_kg_unit_revenue_yen === null
-        ? null
-        : Number(row.average_kg_unit_revenue_yen),
-    })),
-    [weightedPriceRows],
+    () => mergeKgPriceSeries(weightedPriceRows, marketPriceRows),
+    [marketPriceRows, weightedPriceRows],
   )
   const kgSummary = useMemo(
     () => summarizeWeightedKgPrices(weightedPriceRows),
     [weightedPriceRows],
   )
-  const kgPriceValues = useMemo(
-    () => kgChartRows.flatMap((row) => (
-      row.average_kg_unit_revenue_yen === null ? [] : [row.average_kg_unit_revenue_yen]
-    )),
+  const selfKgPriceValues = useMemo(
+    () => kgChartRows.flatMap((row) => row.average_kg_unit_revenue_yen === null
+      ? []
+      : [row.average_kg_unit_revenue_yen]),
     [kgChartRows],
+  )
+  const marketKgPriceValues = useMemo(
+    () => kgChartRows.flatMap((row) => row.market_mid_price_yen_per_kg === null
+      ? []
+      : [row.market_mid_price_yen_per_kg]),
+    [kgChartRows],
+  )
+  const kgPriceValues = useMemo(
+    () => [...selfKgPriceValues, ...marketKgPriceValues],
+    [marketKgPriceValues, selfKgPriceValues],
+  )
+  const marketItemNames = useMemo(
+    () => [...new Set(marketPriceRows.map((row) => row.market_item_name))].sort(),
+    [marketPriceRows],
   )
   const kgPriceDomain = useMemo<[number, number]>(() => {
     if (!kgPriceValues.length) return [0, 1_000]
@@ -526,7 +565,9 @@ export function ProductDetail({
                   <p className="section-kicker">WEIGHTED UNIT REVENUE</p>
                   <h2>平均kg単価の推移</h2>
                 </div>
-                <span className="record-count">重量換算 {kgPriceValues.length}日</span>
+                <span className="record-count">
+                  自社 {selfKgPriceValues.length}日 / 市況 {marketKgPriceValues.length}日
+                </span>
               </div>
               <div className="chart-wrap compact">
                 {kgPriceValues.length ? (
@@ -538,9 +579,10 @@ export function ProductDetail({
                         domain={kgPriceDomain}
                         tickFormatter={(value) => `¥${integer.format(Number(value))}`}
                       />
+                      <Legend />
                       <Tooltip
                         labelFormatter={(label) => formatLongDate(String(label))}
-                        formatter={(value) => [yen.format(Number(value)), '平均kg単価']}
+                        formatter={(value, name) => [yen.format(Number(value)), String(name)]}
                       />
                       {kgSummary.averageKgUnitRevenueYen !== null && (
                         <ReferenceLine
@@ -548,7 +590,7 @@ export function ProductDetail({
                           stroke="#8aa092"
                           strokeDasharray="5 5"
                           label={{
-                            value: `期間平均 ${yen.format(kgSummary.averageKgUnitRevenueYen)}/kg`,
+                            value: `自社期間平均 ${yen.format(kgSummary.averageKgUnitRevenueYen)}/kg`,
                             position: 'insideTopRight',
                             fill: '#65756b',
                             fontSize: 11,
@@ -558,12 +600,24 @@ export function ProductDetail({
                       <Line
                         type="linear"
                         dataKey="average_kg_unit_revenue_yen"
-                        name="平均kg単価"
+                        name="自社平均kg単価"
                         stroke="#6c5a3a"
                         strokeWidth={2}
                         connectNulls
                         dot={{ r: 3, fill: '#6c5a3a', strokeWidth: 0 }}
                         activeDot={{ r: 5, fill: '#6c5a3a', stroke: '#fffdf7', strokeWidth: 2 }}
+                        isAnimationActive={false}
+                      />
+                      <Line
+                        type="linear"
+                        dataKey="market_mid_price_yen_per_kg"
+                        name="沖縄協同青果 市況中値"
+                        stroke="#d06f3b"
+                        strokeWidth={2}
+                        strokeDasharray="7 4"
+                        connectNulls
+                        dot={{ r: 3, fill: '#d06f3b', strokeWidth: 0 }}
+                        activeDot={{ r: 5, fill: '#d06f3b', stroke: '#fffdf7', strokeWidth: 2 }}
                         isAnimationActive={false}
                       />
                     </LineChart>
@@ -574,6 +628,11 @@ export function ProductDetail({
                   </div>
                 )}
               </div>
+              {marketItemNames.length > 0 && (
+                <p className="data-note market-data-caption">
+                  {`比較市況：沖縄協同青果「${marketItemNames.join('」「')}」の販売価格中値（税込、円/kg）`}
+                </p>
+              )}
               <p className="data-note">
                 平均kg単価は、FIFOで対応付けた純売上を販売重量で割って算出しています。換算済み重量は
                 {weight.format(kgSummary.soldWeightKg)}kgです。
