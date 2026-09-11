@@ -82,6 +82,49 @@ function sourceRowTopPercent(sourceRow: number) {
   return Math.min(89.4, 19.2 + Math.max(0, sourceRow) * 1.8)
 }
 
+function detectPopulatedShipmentRows(image: HTMLImageElement, expectedCount: number) {
+  const physicalRowCount = 40
+  if (expectedCount <= 0 || expectedCount >= physicalRowCount) {
+    return Array.from({ length: Math.min(expectedCount, physicalRowCount) }, (_, index) => index)
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.min(640, image.naturalWidth)
+  canvas.height = Math.round(image.naturalHeight * canvas.width / image.naturalWidth)
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (!context) return Array.from({ length: expectedCount }, (_, index) => index)
+
+  context.drawImage(image, 0, 0, canvas.width, canvas.height)
+  const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+  const rowStep = canvas.height * 0.018
+  const firstCenter = canvas.height * 0.192
+  const sampleRanges = [[0.19, 0.25], [0.28, 0.34], [0.37, 0.43], [0.46, 0.51], [0.54, 0.60]]
+  const scores = Array.from({ length: physicalRowCount }, (_, physicalRow) => {
+    const center = firstCenter + physicalRow * rowStep
+    const top = Math.max(0, Math.round(center - rowStep * 0.3))
+    const bottom = Math.min(canvas.height - 1, Math.round(center + rowStep * 0.3))
+    let ink = 0
+    let samples = 0
+    for (const [from, to] of sampleRanges) {
+      for (let x = Math.round(canvas.width * from); x <= Math.round(canvas.width * to); x += 2) {
+        for (let y = top; y <= bottom; y += 2) {
+          const offset = (y * canvas.width + x) * 4
+          const luminance = (pixels[offset] * 299 + pixels[offset + 1] * 587 + pixels[offset + 2] * 114) / 1000
+          ink += Math.max(0, 175 - luminance)
+          samples += 1
+        }
+      }
+    }
+    return { physicalRow, score: samples ? ink / samples : 0 }
+  })
+
+  return scores
+    .sort((left, right) => right.score - left.score)
+    .slice(0, expectedCount)
+    .map(({ physicalRow }) => physicalRow)
+    .sort((left, right) => left - right)
+}
+
 function draftFor(row: ShipmentReviewDbRow): Draft {
   return Object.fromEntries(fieldDefinitions.map(({ key }) => [
     key,
@@ -155,6 +198,7 @@ export function ShipmentReviewDb() {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [decisionReason, setDecisionReason] = useState('')
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({})
+  const [imagePhysicalRows, setImagePhysicalRows] = useState<Record<string, number[]>>({})
   const [bundleName, setBundleName] = useState('')
   const [zoom, setZoom] = useState(100)
   const [operation, setOperation] = useState<OperationState>({ kind: 'idle', message: '', retryable: false })
@@ -224,6 +268,7 @@ export function ShipmentReviewDb() {
   const pageRows = currentRow
     ? rows.map((row, index) => ({ row, index })).filter(({ row }) => row.source_page === currentRow.source_page)
     : []
+  const currentPageRowPosition = pageRows.findIndex(({ index }) => index === currentIndex)
   const openIssues = currentRow?.issues.filter((issue) => issue.issue_status === 'open') ?? []
   const candidates = currentRow ? actionableShipmentReviewCandidates(currentRow) : []
   const openErrorCount = openIssues.filter((issue) => issue.severity === 'error').length
@@ -236,7 +281,10 @@ export function ShipmentReviewDb() {
     && rows.some((row) => row.row_status === 'approved')
     && rows.every((row) => row.row_status === 'approved' || row.row_status === 'no_shipment')
   const pageImageUrl = currentRow ? imageUrls[currentRow.source_page] : undefined
-  const currentRowTop = sourceRowTopPercent(currentRow?.source_row ?? 0)
+  const currentPhysicalRow = currentRow && currentPageRowPosition >= 0
+    ? imagePhysicalRows[currentRow.source_page]?.[currentPageRowPosition] ?? currentRow.source_row
+    : 0
+  const currentRowTop = sourceRowTopPercent(currentPhysicalRow)
 
   function focusCurrentImageRow(smooth: boolean) {
     const scroller = imageScrollRef.current
@@ -249,7 +297,7 @@ export function ShipmentReviewDb() {
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => focusCurrentImageRow(true))
     return () => window.cancelAnimationFrame(frame)
-  }, [currentRow?.shipment_review_row_id, pageImageUrl, zoom])
+  }, [currentRow?.shipment_review_row_id, currentRowTop, pageImageUrl, zoom])
 
   async function refreshBatch(importBatchId: string, preferredRowId?: string) {
     const api = getShipmentReviewApi()
@@ -303,6 +351,7 @@ export function ShipmentReviewDb() {
     Array.from(files).forEach((file) => {
       if (file.type.startsWith('image/')) next[file.name] = URL.createObjectURL(file)
     })
+    setImagePhysicalRows({})
     setImageUrls(next)
   }
 
@@ -504,7 +553,7 @@ export function ShipmentReviewDb() {
                 <label className="image-zoom">表示倍率 {zoom}%<input type="range" min="60" max="180" step="10" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></label>
               </div>
               <div className="source-image-scroll" ref={imageScrollRef}>
-                {pageImageUrl ? <><div className="source-image-stage" style={{ width: `${zoom}%` }}><img ref={sourceImageRef} src={pageImageUrl} alt={`${currentRow.source_page}の原画像`} onLoad={() => focusCurrentImageRow(false)} /><span className="source-row-highlight" style={{ top: `${currentRowTop}%` }} aria-hidden="true" /></div><div className="source-image-scroll-spacer" aria-hidden="true" /></>
+                {pageImageUrl ? <><div className="source-image-stage" style={{ width: `${zoom}%` }}><img ref={sourceImageRef} src={pageImageUrl} alt={`${currentRow.source_page}の原画像`} onLoad={(event) => { setImagePhysicalRows((current) => ({ ...current, [currentRow.source_page]: detectPopulatedShipmentRows(event.currentTarget, pageRows.length) })); focusCurrentImageRow(false) }} /><span className="source-row-highlight" style={{ top: `${currentRowTop}%` }} aria-hidden="true" /></div><div className="source-image-scroll-spacer" aria-hidden="true" /></>
                   : <div className="image-placeholder"><strong>このページの画像が選択されていません</strong><span>画像はSupabaseへ送信されません。</span></div>}
               </div>
             </section>

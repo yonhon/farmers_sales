@@ -835,8 +835,8 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .review-decision-reason { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; margin: 0; color: var(--ink-muted); font-size: 0.68rem; font-weight: 700; }
 .review-decision-reason input { min-width: 0; padding: 7px 9px; border: 1px solid #cbd2c9; border-radius: 7px; background: white; }
-.review-action-buttons { display: grid; grid-template-columns: 1.2fr 0.9fr 0.65fr 0.8fr auto; gap: 7px; }
-.review-action-buttons button { min-width: 0; padding: 8px 7px; }
+.review-action-buttons { display: grid; grid-template-columns: minmax(105px, 1.2fr) minmax(72px, 0.9fr) minmax(62px, 0.65fr) minmax(82px, 0.8fr) minmax(68px, auto); gap: 7px; }
+.review-action-buttons button { min-width: 0; padding: 8px 7px; white-space: nowrap; }
 .review-confirm-fields { width: 100%; margin: 0; }
 .review-history { margin-top: 10px; color: var(--ink-muted); font-size: 0.75rem; }
 .review-history summary { cursor: pointer; color: var(--forest); font-weight: 700; }
