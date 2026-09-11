@@ -2,8 +2,11 @@ import { useEffect, useMemo, useState } from 'react'
 
 import {
   ShipmentReviewApiError,
+  actionableShipmentReviewCandidates,
+  canFinalizeShipmentReview,
   createShipmentReviewRequestId,
   getShipmentReviewApi,
+  isShipmentReviewCandidate,
 } from '../lib/shipmentReviewClient'
 import type {
   ShipmentReviewAction,
@@ -53,15 +56,10 @@ function compareRows(left: ShipmentReviewDbRow, right: ShipmentReviewDbRow) {
     || left.shipment_review_row_id.localeCompare(right.shipment_review_row_id)
 }
 
-function isCandidate(observation: ShipmentReviewObservation) {
-  return observation.review_status === 'proposed'
-    && typeof observation.evidence.candidate_group_key === 'string'
-}
-
 function displayedObservation(row: ShipmentReviewDbRow, field: ShipmentReviewField) {
   const observations = row.observations.filter((item) => item.field_name === field)
   return observations.find((item) => item.review_status === 'accepted')
-    ?? observations.find((item) => item.review_status === 'proposed' && !isCandidate(item))
+    ?? observations.find((item) => item.review_status === 'proposed' && !isShipmentReviewCandidate(item))
     ?? observations.find((item) => item.review_status === 'proposed')
     ?? null
 }
@@ -212,10 +210,11 @@ export function ShipmentReviewDb() {
     ? rows.map((row, index) => ({ row, index })).filter(({ row }) => row.source_page === currentRow.source_page)
     : []
   const openIssues = currentRow?.issues.filter((issue) => issue.issue_status === 'open') ?? []
-  const candidates = currentRow?.observations.filter(isCandidate) ?? []
+  const candidates = currentRow ? actionableShipmentReviewCandidates(currentRow) : []
   const isBusy = operation.kind === 'saving'
   const canFinalize = Boolean(batch)
     && !batch?.finalized_at
+    && canFinalizeShipmentReview(rows)
     && rows.some((row) => row.row_status === 'approved')
     && rows.every((row) => row.row_status === 'approved' || row.row_status === 'no_shipment')
 

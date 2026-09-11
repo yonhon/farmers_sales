@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   ShipmentReviewApiError,
+  actionableShipmentReviewCandidates,
+  canFinalizeShipmentReview,
   createShipmentReviewApi,
   type ShipmentReviewBackend,
 } from './shipmentReviewClient'
@@ -19,6 +21,41 @@ function backend(options?: { feature?: unknown; featureError?: { message: string
 }
 
 describe('shipment review API client', () => {
+  it('hides candidate support values that equal an unambiguous transcribed value', () => {
+    const observation = (field_name: 'content_value' | 'content_unit' | 'unit_price_yen', normalized_value: unknown, candidate = false) => ({
+      shipment_field_observation_id: `${field_name}-${normalized_value}-${candidate}`,
+      field_name,
+      raw_value: null,
+      normalized_value,
+      value_source: candidate ? 'rule_inferred' : 'image_read',
+      confidence: 'low',
+      review_status: 'proposed' as const,
+      evidence: candidate ? { candidate_group_key: `${field_name}-${normalized_value}` } : {},
+      recorded_at: '2026-09-12T00:00:00Z',
+    })
+    const row = {
+      observations: [
+        observation('content_value', '2'),
+        observation('content_unit', '個'),
+        ...Array.from({ length: 7 }, (_, index) => observation('content_value', '2', true)),
+        ...Array.from({ length: 7 }, (_, index) => observation('content_unit', '個', true)),
+        ...[116, 120, 129, 162, 200, 216, 280].map((price) => observation('unit_price_yen', price, true)),
+      ],
+    } as never
+
+    expect(actionableShipmentReviewCandidates(row).map((item) => item.field_name)).toEqual(
+      Array(7).fill('unit_price_yen'),
+    )
+  })
+
+  it('enables finalization only when at least one row is approved and all rows are decided', () => {
+    expect(canFinalizeShipmentReview([])).toBe(false)
+    expect(canFinalizeShipmentReview([{ row_status: 'unreviewed' }])).toBe(false)
+    expect(canFinalizeShipmentReview([{ row_status: 'approved' }, { row_status: 'deferred' }])).toBe(false)
+    expect(canFinalizeShipmentReview([{ row_status: 'no_shipment' }])).toBe(false)
+    expect(canFinalizeShipmentReview([{ row_status: 'approved' }, { row_status: 'no_shipment' }])).toBe(true)
+  })
+
   it('reads the shipment_input feature flag and fails closed for missing rows', async () => {
     const enabled = backend()
     await expect(createShipmentReviewApi(enabled.client).getFeatureEnabled()).resolves.toBe(true)

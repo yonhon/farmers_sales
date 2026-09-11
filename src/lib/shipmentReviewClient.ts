@@ -27,6 +27,28 @@ export type ShipmentReviewObservation = {
   recorded_at: string
 }
 
+export function isShipmentReviewCandidate(observation: ShipmentReviewObservation) {
+  return observation.review_status === 'proposed'
+    && typeof observation.evidence.candidate_group_key === 'string'
+}
+
+export function actionableShipmentReviewCandidates(row: ShipmentReviewDbRow) {
+  return row.observations.filter((candidate) => {
+    if (!isShipmentReviewCandidate(candidate)) return false
+    const accepted = row.observations.find((observation) => (
+      observation.field_name === candidate.field_name
+      && observation.review_status === 'accepted'
+    ))
+    const transcribed = row.observations.find((observation) => (
+      observation.field_name === candidate.field_name
+      && observation.review_status === 'proposed'
+      && !isShipmentReviewCandidate(observation)
+    ))
+    const current = accepted ?? transcribed
+    return !current || String(current.normalized_value ?? '') !== String(candidate.normalized_value ?? '')
+  })
+}
+
 export type ShipmentReviewIssue = {
   shipment_review_issue_id: string
   field_name: ShipmentReviewField | null
@@ -90,6 +112,13 @@ export type ShipmentReviewBatch = {
   finalized_at: string | null
   finalization_result: Record<string, unknown> | null
   rows: ShipmentReviewDbRow[]
+}
+
+export function canFinalizeShipmentReview(
+  rows: Array<Pick<ShipmentReviewDbRow, 'row_status'>>,
+) {
+  return rows.some((row) => row.row_status === 'approved')
+    && rows.every((row) => ['approved', 'no_shipment'].includes(row.row_status))
 }
 
 export type ShipmentReviewAction = {
