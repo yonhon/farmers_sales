@@ -89,7 +89,7 @@ function detectPopulatedShipmentRows(image: HTMLImageElement, expectedCount: num
   }
 
   const canvas = document.createElement('canvas')
-  canvas.width = Math.min(640, image.naturalWidth)
+  canvas.width = Math.min(360, image.naturalWidth)
   canvas.height = Math.round(image.naturalHeight * canvas.width / image.naturalWidth)
   const context = canvas.getContext('2d', { willReadFrequently: true })
   if (!context) return Array.from({ length: expectedCount }, (_, index) => index)
@@ -292,6 +292,22 @@ export function ShipmentReviewDb() {
     if (!scroller || !image || !image.clientHeight) return
     const target = image.offsetTop + image.clientHeight * currentRowTop / 100 - scroller.clientHeight * 0.32
     scroller.scrollTo({ top: Math.max(0, target), behavior: smooth ? 'smooth' : 'auto' })
+  }
+
+  function analyzeImageRowsAfterPaint(image: HTMLImageElement, sourcePage: string, expectedCount: number) {
+    window.requestAnimationFrame(() => {
+      window.setTimeout(() => {
+        try {
+          const detectedRows = detectPopulatedShipmentRows(image, expectedCount)
+          setImagePhysicalRows((current) => ({ ...current, [sourcePage]: detectedRows }))
+        } catch {
+          setImagePhysicalRows((current) => ({
+            ...current,
+            [sourcePage]: Array.from({ length: expectedCount }, (_, index) => index),
+          }))
+        }
+      }, 0)
+    })
   }
 
   useEffect(() => {
@@ -553,7 +569,7 @@ export function ShipmentReviewDb() {
                 <label className="image-zoom">表示倍率 {zoom}%<input type="range" min="60" max="180" step="10" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></label>
               </div>
               <div className="source-image-scroll" ref={imageScrollRef}>
-                {pageImageUrl ? <><div className="source-image-stage" style={{ width: `${zoom}%` }}><img ref={sourceImageRef} src={pageImageUrl} alt={`${currentRow.source_page}の原画像`} onLoad={(event) => { setImagePhysicalRows((current) => ({ ...current, [currentRow.source_page]: detectPopulatedShipmentRows(event.currentTarget, pageRows.length) })); focusCurrentImageRow(false) }} /><span className="source-row-highlight" style={{ top: `${currentRowTop}%` }} aria-hidden="true" /></div><div className="source-image-scroll-spacer" aria-hidden="true" /></>
+                {pageImageUrl ? <><div className="source-image-stage" style={{ width: `${zoom}%` }}><img ref={sourceImageRef} src={pageImageUrl} alt={`${currentRow.source_page}の原画像`} onLoad={(event) => { analyzeImageRowsAfterPaint(event.currentTarget, currentRow.source_page, pageRows.length); focusCurrentImageRow(false) }} /><span className="source-row-highlight" style={{ top: `${currentRowTop}%` }} aria-hidden="true" /></div><div className="source-image-scroll-spacer" aria-hidden="true" /></>
                   : <div className="image-placeholder"><strong>このページの画像が選択されていません</strong><span>画像はSupabaseへ送信されません。</span></div>}
               </div>
             </section>
