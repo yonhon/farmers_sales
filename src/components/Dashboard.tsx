@@ -17,11 +17,12 @@ import { aggregateProducts, filterByDate, summarizeSales } from '../lib/analytic
 import { buildSalesHashHref, parseHashRoute } from '../lib/routes'
 import type { HashRoute } from '../lib/routes'
 import { supabase } from '../lib/supabase'
+import { getShipmentReviewApi } from '../lib/shipmentReviewClient'
 import { recordUsageEvent } from '../lib/usageTracking'
 import type { DailyProductSalesRow, DailySalesRow } from '../types'
 import { ProductDetail } from './ProductDetail'
 import { SalesImport } from './SalesImport'
-import { ShipmentReview } from './ShipmentReview'
+import { ShipmentReviewDb } from './ShipmentReviewDb'
 import { UsageAdmin } from './UsageAdmin'
 import { UserManagement } from './UserManagement'
 
@@ -83,6 +84,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
   const [startDate, setStartDate] = useState(initialRoute.startDate)
   const [endDate, setEndDate] = useState(initialRoute.endDate)
   const [appRole, setAppRole] = useState('viewer')
+  const [shipmentInputEnabled, setShipmentInputEnabled] = useState(false)
   const [displayName, setDisplayName] = useState('ログインユーザー')
   const [productSort, setProductSort] = useState<{
     key: ProductSortKey
@@ -125,6 +127,16 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
         if (!active) return
         setAppRole(String(roleResponse.data.app_role))
         setDisplayName(String(roleResponse.data.display_name))
+        if (roleResponse.data.app_role === 'admin' || roleResponse.data.app_role === 'inputter') {
+          try {
+            setShipmentInputEnabled(await getShipmentReviewApi().getFeatureEnabled())
+          } catch (featureError) {
+            console.error(featureError)
+            setShipmentInputEnabled(false)
+          }
+        } else {
+          setShipmentInputEnabled(false)
+        }
 
         const needsSalesData = !isImportRoute
           && !isShipmentReviewRoute
@@ -251,9 +263,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
         <div className="user-actions">
           {appRole === 'admin' || appRole === 'inputter' ? (
             <>
-              <a className={`header-link${isShipmentReviewRoute ? ' is-active' : ''}`} href="#/shipments/review">
-                出荷確認
-              </a>
+              {shipmentInputEnabled && <a className={`header-link${isShipmentReviewRoute ? ' is-active' : ''}`} href="#/shipments/review">出荷確認</a>}
               <a className={`header-link${isImportRoute ? ' is-active' : ''}`} href="#/sales/import">
                 データ登録
               </a>
@@ -333,9 +343,9 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
               ? <UserManagement currentUserId={userId} />
               : <div className="status-panel error" role="alert">この画面を表示する権限がありません。</div>
           ) : isShipmentReviewRoute ? (
-            appRole === 'admin' || appRole === 'inputter'
-              ? <ShipmentReview />
-              : <div className="status-panel error" role="alert">この画面を表示する権限がありません。</div>
+            (appRole === 'admin' || appRole === 'inputter') && shipmentInputEnabled
+              ? <ShipmentReviewDb />
+              : <div className="status-panel error" role="alert">出荷入力機能が無効か、この画面を表示する権限がありません。</div>
           ) : isImportRoute ? (
             appRole === 'admin' || appRole === 'inputter' ? (
             <SalesImport

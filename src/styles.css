@@ -625,6 +625,11 @@ tbody tr:last-child td { border-bottom: 0; }
 .review-status.approved { color: #25553e; background: #e2f1e7; }
 .review-status.held { color: #65447f; background: #efe5f5; }
 .review-status.excluded { color: #8b342b; background: #f8dfda; }
+.review-status.unreviewed,
+.review-status.in_review { color: #795319; background: #fff0c9; }
+.review-status.deferred { color: #65447f; background: #efe5f5; }
+.review-status.no_shipment,
+.review-status.rejected { color: #8b342b; background: #f8dfda; }
 .review-row-nav { display: flex; gap: 6px; margin: 18px 0; overflow-x: auto; padding: 3px; }
 .review-row-nav button {
   position: relative;
@@ -640,6 +645,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .review-row-nav button.approved { color: #25553e; border-color: #a9c8b3; background: #eff8f1; }
 .review-row-nav button.held { color: #65447f; border-color: #c7afd7; background: #f5eef9; }
 .review-row-nav button.excluded { color: #8b342b; border-color: #d9aaa3; background: #fff1ee; }
+.review-row-nav button.deferred { color: #65447f; border-color: #c7afd7; background: #f5eef9; }
+.review-row-nav button.no_shipment,
+.review-row-nav button.rejected { color: #8b342b; border-color: #d9aaa3; background: #fff1ee; }
 .review-row-nav button.is-current { outline: 3px solid rgba(77, 139, 101, 0.24); border-color: var(--forest); }
 .review-row-nav button span {
   position: absolute;
@@ -705,6 +713,29 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .review-export-panel.ready { border-left-color: var(--leaf); background: #f8fcf8; }
 .review-export-panel .primary-button { flex: 0 0 auto; }
+.file-picker select { width: 100%; }
+.review-db-list { display: grid; gap: 8px; margin: 16px 0; }
+.review-db-list h3 { margin: 0 0 2px; color: var(--forest); font-size: 0.85rem; }
+.review-db-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8faf5;
+}
+.review-db-item.warning { border-left: 4px solid #c79025; }
+.review-db-item.error { border-left: 4px solid #a74235; }
+.review-db-item > div:first-child { display: grid; gap: 3px; }
+.review-db-item span { color: var(--ink-muted); font-size: 0.75rem; }
+.inline-actions { display: flex; gap: 6px; }
+.review-confirm-fields { width: 100%; margin: 12px 0; }
+.review-decision-reason { display: grid; gap: 6px; margin: 14px 0; color: var(--ink-muted); font-size: 0.72rem; font-weight: 700; }
+.review-history { margin-top: 16px; color: var(--ink-muted); font-size: 0.75rem; }
+.review-history summary { cursor: pointer; color: var(--forest); font-weight: 700; }
+.review-history ol { display: grid; gap: 6px; padding-left: 22px; }
 .shipment-review-empty {
   display: grid;
   place-items: center;
