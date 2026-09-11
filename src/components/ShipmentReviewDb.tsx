@@ -79,7 +79,7 @@ function issueTitle(code: string, fieldName: string | null, severity: string) {
 }
 
 function sourceRowTopPercent(sourceRow: number) {
-  return Math.min(89, 21.5 + Math.max(0, sourceRow) * 1.9)
+  return Math.min(89.4, 19.2 + Math.max(0, sourceRow) * 1.8)
 }
 
 function draftFor(row: ShipmentReviewDbRow): Draft {
@@ -424,9 +424,8 @@ export function ShipmentReviewDb() {
   }
 
   function selectPage(sourcePage: string) {
-    const next = rows.findIndex((row) => row.source_page === sourcePage && row.row_status === 'unreviewed')
     const first = rows.findIndex((row) => row.source_page === sourcePage)
-    setCurrentIndex(next >= 0 ? next : first)
+    if (first >= 0) setCurrentIndex(first)
   }
 
   return (
@@ -540,11 +539,10 @@ export function ShipmentReviewDb() {
                 {openIssues.length > 0 && <details className="review-issues" key={currentRow.shipment_review_row_id} open={openErrorCount > 0}><summary><strong>警告・確認事項</strong><span>{openErrorCount > 0 && `エラー ${openErrorCount}件`}{openErrorCount > 0 && openWarningCount > 0 && '・'}{openWarningCount > 0 && `警告 ${openWarningCount}件`}{(openErrorCount > 0 || openWarningCount > 0) && openInfoCount > 0 && '・'}{openInfoCount > 0 && `情報 ${openInfoCount}件`}</span></summary><p className="review-issue-guidance">入力値を保存した後、該当する警告を解決してください。</p><div className="review-db-list">{openIssues.map((issue) => <div className={`review-db-item ${issue.severity}`} key={issue.shipment_review_issue_id}><div><strong>{issueTitle(issue.code, issue.field_name, issue.severity)}</strong><details className="review-issue-technical"><summary>詳細</summary><code>{issue.code}</code><span>{issue.message}</span></details></div><button type="button" className="secondary-button compact" disabled={isBusy} onClick={() => void closeIssue(issue.shipment_review_issue_id, issue.severity)}>{issue.severity === 'error' ? '修正済みとして解決' : '確認して許容'}</button></div>)}</div></details>}
 
                 <details className="review-history"><summary>操作履歴（{currentRow.actions.length}件）</summary>{currentRow.actions.length ? <ol>{currentRow.actions.map((action) => <li key={action.shipment_review_action_id}><time>{new Date(action.acted_at).toLocaleString('ja-JP')}</time> {action.action_type}{action.notes ? ` — ${action.notes}` : ''}</li>)}</ol> : <p>操作履歴はまだありません。</p>}</details>
-              </div>
-
-              <div className="review-action-dock">
-                <label className="review-decision-reason">判断理由・コメント<input type="text" value={decisionReason} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDecisionReason(event.target.value)} placeholder="保留・出荷なし・差し戻しでは必須" /></label>
-                <div className="review-action-buttons"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>入力を保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>承認</button><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>出荷なし</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻し</button></div>
+                <div className="review-action-dock">
+                  <label className="review-decision-reason">判断理由・コメント<input type="text" value={decisionReason} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDecisionReason(event.target.value)} placeholder="保留・出荷なし・差し戻しでは必須" /></label>
+                  <div className="review-action-buttons"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>入力を保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>承認</button><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>出荷なし</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻し</button></div>
+                </div>
               </div>
             </section>
           </div>
