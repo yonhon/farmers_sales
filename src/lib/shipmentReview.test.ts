@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   SHIPMENT_REVIEW_COLUMNS,
   hasRowChanged,
+  inferShipmentContentUnit,
   isPriorityReviewItem,
   nextPendingIndex,
   parseShipmentReviewCsv,
@@ -34,6 +35,17 @@ function csvRow(overrides: Record<string, string> = {}) {
 }
 
 describe('shipment review CSV', () => {
+  it('infers a missing content unit from the content value', () => {
+    expect(inferShipmentContentUnit('2', 'パプリカ')).toBe('個')
+    expect(inferShipmentContentUnit('2', 'ゴーヤー')).toBe('本')
+    expect(inferShipmentContentUnit('10', '大葉')).toBe('枚')
+    expect(inferShipmentContentUnit('29.9', '未登録品目')).toBe('')
+    expect(inferShipmentContentUnit('30')).toBe('g')
+    expect(inferShipmentContentUnit('100')).toBe('g')
+    expect(inferShipmentContentUnit('')).toBe('')
+    expect(inferShipmentContentUnit('不明', 'パプリカ')).toBe('')
+  })
+
   it('parses the monthly schema and preserves quoted values', () => {
     const text = `${SHIPMENT_REVIEW_COLUMNS.join(',')}\r\n${csvRow({ comment: '確認,必要' }).replace('確認,必要', '"確認,必要"')}\r\n`
     const [item] = parseShipmentReviewCsv(text)

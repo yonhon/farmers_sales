@@ -28,6 +28,29 @@ export type ShipmentReviewItem = {
   decision: ShipmentReviewDecision
 }
 
+const shipmentContentUnitByProduct: Record<string, string> = {
+  大葉: '枚',
+  パプリカ: '個',
+  'パプリカ(混合)': '個',
+  青パプリカ: '個',
+  '大型パプリカ(青)': '個',
+  'パプリカ(青)': '個',
+  きゅうり: '本',
+  キュウリ: '本',
+  ゴーヤ: '本',
+  'ゴーヤ(細)': '本',
+  'ゴーヤ(太)': '本',
+  ゴーヤー: '本',
+}
+
+export function inferShipmentContentUnit(contentValue: string, productName = ''): string {
+  const trimmed = contentValue.trim()
+  if (!trimmed) return ''
+  const numericValue = Number(trimmed)
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return ''
+  return numericValue >= 30 ? 'g' : shipmentContentUnitByProduct[productName.trim()] ?? ''
+}
+
 function parseCsvRecords(value: string): string[][] {
   const records: string[][] = []
   let record: string[] = []

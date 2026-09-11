@@ -17,7 +17,7 @@ import type {
   ShipmentReviewObservation,
   ShipmentReviewRowStatus,
 } from '../lib/shipmentReviewClient'
-import { sourcePageNumber } from '../lib/shipmentReview'
+import { inferShipmentContentUnit, sourcePageNumber } from '../lib/shipmentReview'
 import { shipmentReviewPhysicalRow } from '../lib/shipmentReviewImageRows'
 
 const selectedBatchStorageKey = 'shipment-review:selected-batch:v2'
@@ -84,10 +84,14 @@ function sourceRowTopPercent(sourceRow: number) {
 }
 
 function draftFor(row: ShipmentReviewDbRow): Draft {
-  return Object.fromEntries(fieldDefinitions.map(({ key }) => [
+  const next = Object.fromEntries(fieldDefinitions.map(({ key }) => [
     key,
     valueText(displayedObservation(row, key)?.normalized_value),
   ])) as Draft
+  if (!next.content_unit.trim()) {
+    next.content_unit = inferShipmentContentUnit(next.content_value, next.product)
+  }
+  return next
 }
 
 function normalizedValue(field: ShipmentReviewField, value: string): unknown {
@@ -331,24 +335,38 @@ export function ShipmentReviewDb() {
     }
   }
 
+  function inferMissingDraftUnit(value: Draft): Draft {
+    if (value.content_unit.trim()) return value
+    return {
+      ...value,
+      content_unit: inferShipmentContentUnit(value.content_value, value.product),
+    }
+  }
+
+  async function persistDraftValues(row: ShipmentReviewDbRow, value: Draft, rowIsPrepared = false) {
+    if (!rowIsPrepared) await prepareRow(row)
+    for (const { key } of fieldDefinitions) {
+      const previous = displayedObservation(row, key)
+      await apply({
+        shipment_review_row_id: row.shipment_review_row_id,
+        expected_row_status: 'in_review',
+        action_type: 'correct_value',
+        field_name: key,
+        raw_value: previous?.raw_value ?? value[key],
+        normalized_value: normalizedValue(key, value[key]),
+        confidence: 'high',
+        evidence: { source: 'shipment_review_ui', confirmation: true },
+      })
+    }
+  }
+
   async function confirmFields() {
     if (!currentRow || !draft || !batch) return
     setOperation({ kind: 'saving', message: '入力値を監査履歴へ保存しています…', retryable: false })
     try {
-      await prepareRow(currentRow)
-      for (const { key } of fieldDefinitions) {
-        const previous = displayedObservation(currentRow, key)
-        await apply({
-          shipment_review_row_id: currentRow.shipment_review_row_id,
-          expected_row_status: 'in_review',
-          action_type: 'correct_value',
-          field_name: key,
-          raw_value: previous?.raw_value ?? draft[key],
-          normalized_value: normalizedValue(key, draft[key]),
-          confidence: 'high',
-          evidence: { source: 'shipment_review_ui', confirmation: true },
-        })
-      }
+      const completedDraft = inferMissingDraftUnit(draft)
+      setDraft(completedDraft)
+      await persistDraftValues(currentRow, completedDraft)
       await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id)
       setOperation({ kind: 'success', message: '5項目を確定し、操作履歴へ保存しました。', retryable: false })
     } catch (error) {
@@ -395,22 +413,36 @@ export function ShipmentReviewDb() {
   }
 
   async function decide(actionType: 'approve' | 'defer' | 'mark_no_shipment' | 'reject_row') {
-    if (!currentRow || !batch) return
+    if (!currentRow || !batch || !draft) return
     if (actionType !== 'approve' && !decisionReason.trim()) {
       setOperation({ kind: 'error', message: 'この判断には理由を入力してください。', retryable: false })
       return
     }
     setOperation({ kind: 'saving', message: '行の判断を保存しています…', retryable: false })
     try {
+      const nextRowId = actionType === 'approve'
+        ? rows[currentIndex + 1]?.shipment_review_row_id
+        : undefined
       await prepareRow(currentRow)
+      if (actionType === 'approve') {
+        const completedDraft = inferMissingDraftUnit(draft)
+        setDraft(completedDraft)
+        await persistDraftValues(currentRow, completedDraft, true)
+      }
       await apply({
         shipment_review_row_id: currentRow.shipment_review_row_id,
         expected_row_status: 'in_review',
         action_type: actionType,
         notes: decisionReason.trim() || undefined,
       })
-      await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id)
-      setOperation({ kind: 'success', message: '行の判断をDBへ保存しました。', retryable: false })
+      await refreshBatch(batch.import_batch_id, nextRowId ?? currentRow.shipment_review_row_id)
+      setOperation({
+        kind: 'success',
+        message: actionType === 'approve' && nextRowId
+          ? '入力値と承認をDBへ保存し、次の行へ移動しました。'
+          : '行の判断をDBへ保存しました。',
+        retryable: false,
+      })
     } catch (error) {
       setOperation(errorState(error))
     }
@@ -536,7 +568,7 @@ export function ShipmentReviewDb() {
                   const inputId = `shipment-review-${field.key}`
                   return <div className={`review-field${field.key === 'product' || fieldCandidates.length > 3 ? ' wide' : ''}`} key={field.key}>
                     <label htmlFor={inputId}>{field.label}</label>
-                    <input id={inputId} type="text" inputMode={field.inputMode} value={draft[field.key]} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDraft({ ...draft, [field.key]: event.target.value })} />
+                    <input id={inputId} type="text" inputMode={field.inputMode} value={draft[field.key]} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDraft({ ...draft, [field.key]: event.target.value })} onBlur={field.key === 'content_value' || field.key === 'content_unit' ? () => setDraft((value) => value ? inferMissingDraftUnit(value) : value) : undefined} />
                     {fieldCandidates.length > 0 && <div className="review-field-candidates" aria-label={`${field.label}の修正候補`}><span>候補をクリックして採用</span>{fieldCandidates.map((candidate) => <div className="review-candidate-chip" key={candidate.shipment_field_observation_id}><button type="button" className="review-candidate-value" disabled={isBusy} title={`採用（確度: ${candidate.confidence}）`} onClick={() => void actOnCandidate(candidate, true)}>{valueText(candidate.normalized_value)}を採用</button><button type="button" className="review-candidate-reject" disabled={isBusy} aria-label={`${field.label}候補 ${valueText(candidate.normalized_value)} を却下`} title="候補を却下" onClick={() => void actOnCandidate(candidate, false)}>却下</button></div>)}</div>}
                   </div>
                 })}</div>
