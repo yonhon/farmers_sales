@@ -79,7 +79,7 @@ function issueTitle(code: string, fieldName: string | null, severity: string) {
 }
 
 function sourceRowTopPercent(sourceRow: number) {
-  return Math.min(91, 16.5 + Math.max(0, sourceRow) * 2.2)
+  return Math.min(89, 21.5 + Math.max(0, sourceRow) * 1.9)
 }
 
 function draftFor(row: ShipmentReviewDbRow): Draft {
@@ -505,7 +505,7 @@ export function ShipmentReviewDb() {
                 <label className="image-zoom">表示倍率 {zoom}%<input type="range" min="60" max="180" step="10" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></label>
               </div>
               <div className="source-image-scroll" ref={imageScrollRef}>
-                {pageImageUrl ? <div className="source-image-stage" style={{ width: `${zoom}%` }}><img ref={sourceImageRef} src={pageImageUrl} alt={`${currentRow.source_page}の原画像`} onLoad={() => focusCurrentImageRow(false)} /><span className="source-row-highlight" style={{ top: `${currentRowTop}%` }} aria-hidden="true" /></div>
+                {pageImageUrl ? <><div className="source-image-stage" style={{ width: `${zoom}%` }}><img ref={sourceImageRef} src={pageImageUrl} alt={`${currentRow.source_page}の原画像`} onLoad={() => focusCurrentImageRow(false)} /><span className="source-row-highlight" style={{ top: `${currentRowTop}%` }} aria-hidden="true" /></div><div className="source-image-scroll-spacer" aria-hidden="true" /></>
                   : <div className="image-placeholder"><strong>このページの画像が選択されていません</strong><span>画像はSupabaseへ送信されません。</span></div>}
               </div>
             </section>

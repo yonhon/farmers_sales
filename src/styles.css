@@ -619,6 +619,8 @@ tbody tr:last-child td { border-bottom: 0; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 1.05rem;
+  line-height: 1.35;
 }
 .image-zoom { display: grid; min-width: 150px; gap: 5px; color: var(--ink-muted); font-size: 0.68rem; font-weight: 700; }
 .source-image-scroll {
@@ -631,6 +633,7 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .source-image-stage { position: relative; min-width: 60%; margin: 0 auto; }
 .source-image-stage img { display: block; width: 100%; height: auto; }
+.source-image-scroll-spacer { height: 68%; min-height: 320px; pointer-events: none; }
 .source-row-highlight {
   position: absolute;
   right: 12%;
@@ -701,7 +704,7 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .review-row-picker { margin-bottom: 10px; color: var(--ink-muted); font-size: 0.7rem; }
 .review-row-picker > summary { width: fit-content; cursor: pointer; color: var(--forest); font-weight: 700; }
-.review-row-nav { display: flex; gap: 6px; margin: 9px 0 2px; overflow-x: auto; padding: 3px; }
+.review-row-nav { display: flex; gap: 6px; margin: 9px 0 2px; overflow-x: auto; padding: 9px 9px 4px 3px; }
 .review-row-nav button {
   position: relative;
   flex: 0 0 auto;
@@ -722,8 +725,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .review-row-nav button.is-current { outline: 3px solid rgba(77, 139, 101, 0.24); border-color: var(--forest); }
 .review-row-nav button span {
   position: absolute;
-  top: -6px;
-  right: -5px;
+  top: 0;
+  right: 0;
   display: grid;
   place-items: center;
   width: 15px;
@@ -733,6 +736,7 @@ tbody tr:last-child td { border-bottom: 0; }
   background: #c47c1c;
   font-size: 0.6rem;
   font-weight: 700;
+  transform: translate(28%, -45%);
 }
 .review-warning {
   display: grid;
