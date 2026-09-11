@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   ShipmentReviewApiError,
@@ -67,6 +67,19 @@ function displayedObservation(row: ShipmentReviewDbRow, field: ShipmentReviewFie
 function valueText(value: unknown) {
   if (value === null || value === undefined) return ''
   return typeof value === 'string' ? value : String(value)
+}
+
+function issueTitle(code: string, fieldName: string | null, severity: string) {
+  const fieldLabel = fieldDefinitions.find(({ key }) => key === fieldName)?.label
+  if (code === 'transcription_review_note') return '転記内容の確認'
+  if (code.startsWith('missing_')) return `${fieldLabel ?? '必須項目'}が未入力`
+  if (severity === 'error') return `${fieldLabel ?? '入力内容'}の修正が必要`
+  if (severity === 'warning') return `${fieldLabel ?? '入力内容'}の確認が必要`
+  return `${fieldLabel ?? '転記内容'}の参考情報`
+}
+
+function sourceRowTopPercent(sourceRow: number) {
+  return Math.min(91, 16.5 + Math.max(0, sourceRow) * 2.2)
 }
 
 function draftFor(row: ShipmentReviewDbRow): Draft {
@@ -145,6 +158,8 @@ export function ShipmentReviewDb() {
   const [bundleName, setBundleName] = useState('')
   const [zoom, setZoom] = useState(100)
   const [operation, setOperation] = useState<OperationState>({ kind: 'idle', message: '', retryable: false })
+  const imageScrollRef = useRef<HTMLDivElement>(null)
+  const sourceImageRef = useRef<HTMLImageElement>(null)
 
   const rows = useMemo(() => [...(batch?.rows ?? [])].sort(compareRows), [batch])
   const currentRow = rows[currentIndex] ?? null
@@ -220,6 +235,21 @@ export function ShipmentReviewDb() {
     && canFinalizeShipmentReview(rows)
     && rows.some((row) => row.row_status === 'approved')
     && rows.every((row) => row.row_status === 'approved' || row.row_status === 'no_shipment')
+  const pageImageUrl = currentRow ? imageUrls[currentRow.source_page] : undefined
+  const currentRowTop = sourceRowTopPercent(currentRow?.source_row ?? 0)
+
+  function focusCurrentImageRow(smooth: boolean) {
+    const scroller = imageScrollRef.current
+    const image = sourceImageRef.current
+    if (!scroller || !image || !image.clientHeight) return
+    const target = image.offsetTop + image.clientHeight * currentRowTop / 100 - scroller.clientHeight * 0.32
+    scroller.scrollTo({ top: Math.max(0, target), behavior: smooth ? 'smooth' : 'auto' })
+  }
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => focusCurrentImageRow(true))
+    return () => window.cancelAnimationFrame(frame)
+  }, [currentRow?.shipment_review_row_id, pageImageUrl, zoom])
 
   async function refreshBatch(importBatchId: string, preferredRowId?: string) {
     const api = getShipmentReviewApi()
@@ -399,8 +429,6 @@ export function ShipmentReviewDb() {
     setCurrentIndex(next >= 0 ? next : first)
   }
 
-  const pageImageUrl = currentRow ? imageUrls[currentRow.source_page] : undefined
-
   return (
     <div className="shipment-review">
       <section className="panel shipment-review-setup">
@@ -454,33 +482,48 @@ export function ShipmentReviewDb() {
             <div className="review-progress-note"><p>v{batch.report_version} / {batch.source_month.slice(0, 7)}</p><small>DBを正本として保存</small></div>
           </section>
 
-          <nav className="review-page-tabs" aria-label="原稿ページ">
-            {pages.map((page) => {
-              const pending = rows.filter((row) => row.source_page === page && ['unreviewed', 'in_review'].includes(row.row_status)).length
-              const number = sourcePageNumber(page)
-              return <button className={page === currentRow.source_page ? 'is-active' : ''} type="button" key={page} onClick={() => selectPage(page)}>
-                {number ? `${String(number).padStart(2, '0')}ページ` : page}<small>{pending ? `未完了 ${pending}` : '判断済み'}</small>
-              </button>
-            })}
-          </nav>
+          <div className="review-page-bar">
+            <nav className="review-page-tabs" aria-label="原稿ページ">
+              {pages.map((page) => {
+                const pending = rows.filter((row) => row.source_page === page && ['unreviewed', 'in_review'].includes(row.row_status)).length
+                const number = sourcePageNumber(page)
+                return <button className={page === currentRow.source_page ? 'is-active' : ''} type="button" key={page} onClick={() => selectPage(page)}>
+                  {number ? `${String(number).padStart(2, '0')}ページ` : page}<small>{pending ? `未完了 ${pending}` : '判断済み'}</small>
+                </button>
+              })}
+            </nav>
+            <div className={`review-batch-actions${canFinalize ? ' ready' : ''}`}>
+              <span>{batch.finalized_at ? '本番反映済み' : canFinalize ? '反映準備完了' : '全行判断後に反映'}</span>
+              <button className="secondary-button compact" type="button" disabled={isBusy} onClick={() => downloadAuditCsv(rows)}>監査CSV</button>
+              <button className="primary-button compact" type="button" disabled={!canFinalize || isBusy} onClick={() => void finalizeBatch()}>本番反映</button>
+            </div>
+          </div>
 
           <div className="shipment-review-workspace">
             <section className="panel source-image-panel">
               <div className="panel-heading"><div><p className="section-kicker">SOURCE IMAGE</p><h2>{currentRow.source_page}</h2></div>
                 <label className="image-zoom">表示倍率 {zoom}%<input type="range" min="60" max="180" step="10" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></label>
               </div>
-              <div className="source-image-scroll">
-                {pageImageUrl ? <img src={pageImageUrl} alt={`${currentRow.source_page}の原画像`} style={{ width: `${zoom}%` }} />
+              <div className="source-image-scroll" ref={imageScrollRef}>
+                {pageImageUrl ? <div className="source-image-stage" style={{ width: `${zoom}%` }}><img ref={sourceImageRef} src={pageImageUrl} alt={`${currentRow.source_page}の原画像`} onLoad={() => focusCurrentImageRow(false)} /><span className="source-row-highlight" style={{ top: `${currentRowTop}%` }} aria-hidden="true" /></div>
                   : <div className="image-placeholder"><strong>このページの画像が選択されていません</strong><span>画像はSupabaseへ送信されません。</span></div>}
               </div>
             </section>
 
             <section className="panel review-editor-panel">
-              <div className="review-editor-scroll">
+              <header className="review-editor-header">
                 <div className="review-row-heading"><div><p className="section-kicker">ROW {currentRow.source_row}</p><h2>{draft.product || '品目名未入力'}</h2></div>
                   <span className={`review-status ${currentRow.row_status}`}>{statusLabels[currentRow.row_status]}</span>
                 </div>
-                <div className="review-row-nav" aria-label="このページの行">{pageRows.map(({ row, index }) => <button className={`${index === currentIndex ? 'is-current' : ''} ${row.row_status}`} type="button" key={row.shipment_review_row_id} onClick={() => setCurrentIndex(index)}>{row.source_row}{row.issues.some((issue) => issue.issue_status === 'open' && issue.severity !== 'info') && <span aria-label="警告あり">!</span>}</button>)}</div>
+                <div className="review-row-toolbar">
+                  <button className="text-link-button" type="button" disabled={currentIndex === 0} onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))}>前の行</button>
+                  <strong>{currentIndex + 1} / {rows.length}</strong>
+                  <span className={`review-warning-status${openErrorCount + openWarningCount ? ' needs-review' : ''}`}>{openErrorCount + openWarningCount ? `要確認 ${openErrorCount + openWarningCount}` : '警告なし'}</span>
+                  <button className="text-link-button" type="button" disabled={currentIndex === rows.length - 1} onClick={() => setCurrentIndex((index) => Math.min(rows.length - 1, index + 1))}>次の行</button>
+                </div>
+              </header>
+              <div className="review-editor-scroll">
+                <details className="review-row-picker"><summary>このページの行を選択（{pageRows.length}行）</summary><div className="review-row-nav" aria-label="このページの行">{pageRows.map(({ row, index }) => <button className={`${index === currentIndex ? 'is-current' : ''} ${row.row_status}`} type="button" key={row.shipment_review_row_id} onClick={() => setCurrentIndex(index)}>{row.source_row}{row.issues.some((issue) => issue.issue_status === 'open' && issue.severity !== 'info') && <span aria-label="警告あり">!</span>}</button>)}</div></details>
 
                 <dl className="raw-observation"><div><dt>出荷日</dt><dd>{currentRow.shipment_date}</dd></div><div><dt>市場</dt><dd>{currentRow.market_code}</dd></div><div><dt>原記載の備考</dt><dd>{currentRow.raw_notes || '—'}</dd></div></dl>
 
@@ -490,25 +533,21 @@ export function ShipmentReviewDb() {
                   return <div className={`review-field${field.key === 'product' || fieldCandidates.length > 3 ? ' wide' : ''}`} key={field.key}>
                     <label htmlFor={inputId}>{field.label}</label>
                     <input id={inputId} type="text" inputMode={field.inputMode} value={draft[field.key]} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDraft({ ...draft, [field.key]: event.target.value })} />
-                    {fieldCandidates.length > 0 && <div className="review-field-candidates" aria-label={`${field.label}の修正候補`}><span>候補</span>{fieldCandidates.map((candidate) => <div className="review-candidate-chip" key={candidate.shipment_field_observation_id}><button type="button" className="review-candidate-value" disabled={isBusy} title={`採用（確度: ${candidate.confidence}）`} onClick={() => void actOnCandidate(candidate, true)}>{valueText(candidate.normalized_value)}</button><button type="button" className="review-candidate-reject" disabled={isBusy} aria-label={`${field.label}候補 ${valueText(candidate.normalized_value)} を却下`} title="候補を却下" onClick={() => void actOnCandidate(candidate, false)}>×</button></div>)}</div>}
+                    {fieldCandidates.length > 0 && <div className="review-field-candidates" aria-label={`${field.label}の修正候補`}><span>候補をクリックして採用</span>{fieldCandidates.map((candidate) => <div className="review-candidate-chip" key={candidate.shipment_field_observation_id}><button type="button" className="review-candidate-value" disabled={isBusy} title={`採用（確度: ${candidate.confidence}）`} onClick={() => void actOnCandidate(candidate, true)}>{valueText(candidate.normalized_value)}を採用</button><button type="button" className="review-candidate-reject" disabled={isBusy} aria-label={`${field.label}候補 ${valueText(candidate.normalized_value)} を却下`} title="候補を却下" onClick={() => void actOnCandidate(candidate, false)}>却下</button></div>)}</div>}
                   </div>
                 })}</div>
 
-                {openIssues.length > 0 && <details className="review-issues" key={currentRow.shipment_review_row_id} open={openErrorCount > 0}><summary><strong>警告・確認事項</strong><span>{openErrorCount > 0 && `エラー ${openErrorCount}件`}{openErrorCount > 0 && openWarningCount > 0 && '・'}{openWarningCount > 0 && `警告 ${openWarningCount}件`}{(openErrorCount > 0 || openWarningCount > 0) && openInfoCount > 0 && '・'}{openInfoCount > 0 && `情報 ${openInfoCount}件`}</span></summary><div className="review-db-list">{openIssues.map((issue) => <div className={`review-db-item ${issue.severity}`} key={issue.shipment_review_issue_id}><div><strong>{issue.code}</strong><span>{issue.message}</span></div><button type="button" className="secondary-button compact" disabled={isBusy} onClick={() => void closeIssue(issue.shipment_review_issue_id, issue.severity)}>{issue.severity === 'error' ? '修正済みとして解決' : '確認して許容'}</button></div>)}</div></details>}
+                {openIssues.length > 0 && <details className="review-issues" key={currentRow.shipment_review_row_id} open={openErrorCount > 0}><summary><strong>警告・確認事項</strong><span>{openErrorCount > 0 && `エラー ${openErrorCount}件`}{openErrorCount > 0 && openWarningCount > 0 && '・'}{openWarningCount > 0 && `警告 ${openWarningCount}件`}{(openErrorCount > 0 || openWarningCount > 0) && openInfoCount > 0 && '・'}{openInfoCount > 0 && `情報 ${openInfoCount}件`}</span></summary><p className="review-issue-guidance">入力値を保存した後、該当する警告を解決してください。</p><div className="review-db-list">{openIssues.map((issue) => <div className={`review-db-item ${issue.severity}`} key={issue.shipment_review_issue_id}><div><strong>{issueTitle(issue.code, issue.field_name, issue.severity)}</strong><details className="review-issue-technical"><summary>詳細</summary><code>{issue.code}</code><span>{issue.message}</span></details></div><button type="button" className="secondary-button compact" disabled={isBusy} onClick={() => void closeIssue(issue.shipment_review_issue_id, issue.severity)}>{issue.severity === 'error' ? '修正済みとして解決' : '確認して許容'}</button></div>)}</div></details>}
 
                 <details className="review-history"><summary>操作履歴（{currentRow.actions.length}件）</summary>{currentRow.actions.length ? <ol>{currentRow.actions.map((action) => <li key={action.shipment_review_action_id}><time>{new Date(action.acted_at).toLocaleString('ja-JP')}</time> {action.action_type}{action.notes ? ` — ${action.notes}` : ''}</li>)}</ol> : <p>操作履歴はまだありません。</p>}</details>
-                <div className="review-linear-nav"><button className="text-link-button" type="button" disabled={currentIndex === 0} onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))}>前の行</button><span>{currentIndex + 1} / {rows.length}</span><button className="text-link-button" type="button" disabled={currentIndex === rows.length - 1} onClick={() => setCurrentIndex((index) => Math.min(rows.length - 1, index + 1))}>次の行</button></div>
               </div>
 
               <div className="review-action-dock">
                 <label className="review-decision-reason">判断理由・コメント<input type="text" value={decisionReason} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDecisionReason(event.target.value)} placeholder="保留・出荷なし・差し戻しでは必須" /></label>
-                <div className="review-save-actions"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>5項目を確定・履歴保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>この内容で承認</button></div>
-                <div className="review-actions"><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>出荷なし</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻す</button></div>
+                <div className="review-action-buttons"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>入力を保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>承認</button><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>出荷なし</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻し</button></div>
               </div>
             </section>
           </div>
-
-          <section className={`panel review-export-panel${canFinalize ? ' ready' : ''}`}><div><p className="section-kicker">PRODUCTION APPLY</p><h2>{batch.finalized_at ? '本番反映済みです' : canFinalize ? '本番へ反映できます' : '全行の判断後に本番へ反映できます'}</h2><p className="muted">承認済み行だけをDB内で検証し、既存の出荷取込処理へ一括反映します。CSVは監査・障害時の確認用です。</p></div><div className="inline-actions"><button className="secondary-button" type="button" disabled={isBusy} onClick={() => downloadAuditCsv(rows)}>監査CSVを出力</button><button className="primary-button" type="button" disabled={!canFinalize || isBusy} onClick={() => void finalizeBatch()}>本番へ反映</button></div></section>
         </>
       ) : !isBusy && operation.kind !== 'error' ? (
         <section className="shipment-review-empty"><span aria-hidden="true">照</span><h2>bundleを登録するか、DB上のバッチを選択してください</h2><p>前回の進捗はDBから復元されます。</p></section>
