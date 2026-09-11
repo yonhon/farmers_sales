@@ -6,6 +6,7 @@ import {
   canFinalizeShipmentReview,
   createShipmentReviewApi,
   type ShipmentReviewBackend,
+  type ShipmentReviewDbRow,
 } from './shipmentReviewClient'
 
 function backend(options?: { feature?: unknown; featureError?: { message: string }; rpc?: unknown; rpcError?: { message: string } }) {
@@ -41,11 +42,22 @@ describe('shipment review API client', () => {
         ...Array.from({ length: 7 }, (_, index) => observation('content_unit', '個', true)),
         ...[116, 120, 129, 162, 200, 216, 280].map((price) => observation('unit_price_yen', price, true)),
       ],
-    } as never
+    } as unknown as ShipmentReviewDbRow
 
     expect(actionableShipmentReviewCandidates(row).map((item) => item.field_name)).toEqual(
       Array(7).fill('unit_price_yen'),
     )
+
+    const withoutTranscribedUnit = {
+      ...row,
+      observations: row.observations.filter((item) => !(
+        item.field_name === 'content_unit' && Object.keys(item.evidence).length === 0
+      )),
+    } as ShipmentReviewDbRow
+    expect(actionableShipmentReviewCandidates(withoutTranscribedUnit).map((item) => item.field_name)).toEqual([
+      'content_unit',
+      ...Array(7).fill('unit_price_yen'),
+    ])
   })
 
   it('enables finalization only when at least one row is approved and all rows are decided', () => {

@@ -33,6 +33,7 @@ export function isShipmentReviewCandidate(observation: ShipmentReviewObservation
 }
 
 export function actionableShipmentReviewCandidates(row: ShipmentReviewDbRow) {
+  const seen = new Set<string>()
   return row.observations.filter((candidate) => {
     if (!isShipmentReviewCandidate(candidate)) return false
     const accepted = row.observations.find((observation) => (
@@ -45,7 +46,13 @@ export function actionableShipmentReviewCandidates(row: ShipmentReviewDbRow) {
       && !isShipmentReviewCandidate(observation)
     ))
     const current = accepted ?? transcribed
-    return !current || String(current.normalized_value ?? '') !== String(candidate.normalized_value ?? '')
+    if (current && String(current.normalized_value ?? '') === String(candidate.normalized_value ?? '')) {
+      return false
+    }
+    const candidateKey = `${candidate.field_name}:${JSON.stringify(candidate.normalized_value)}`
+    if (seen.has(candidateKey)) return false
+    seen.add(candidateKey)
+    return true
   })
 }
 
