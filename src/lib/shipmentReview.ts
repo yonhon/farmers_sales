@@ -28,6 +28,65 @@ export type ShipmentReviewItem = {
   decision: ShipmentReviewDecision
 }
 
+export type SavedShipmentReviewItem = Pick<ShipmentReviewItem, 'id' | 'row' | 'decision'>
+
+export type ShipmentReviewFileIdentity = {
+  name: string
+  size: number
+  lastModified: number
+}
+
+export function shipmentReviewStorageKey(file: ShipmentReviewFileIdentity): string {
+  return `shipment-review:v1:${file.name}:${file.size}:${file.lastModified}`
+}
+
+export function restoreShipmentReviewItems(
+  parsedItems: ShipmentReviewItem[],
+  savedItems: SavedShipmentReviewItem[],
+): ShipmentReviewItem[] {
+  const savedById = new Map(savedItems.map((item) => [item.id, item]))
+  return parsedItems.map((item) => {
+    const savedItem = savedById.get(item.id)
+    return savedItem
+      ? { ...item, row: { ...item.row, ...savedItem.row }, decision: savedItem.decision }
+      : item
+  })
+}
+
+export function updateShipmentReviewItem(
+  items: ShipmentReviewItem[],
+  currentIndex: number,
+  column: ShipmentReviewColumn,
+  value: string,
+): ShipmentReviewItem[] {
+  return items.map((item, index) => index === currentIndex
+    ? {
+        ...item,
+        row: { ...item.row, [column]: value },
+        decision: item.decision === 'approved' ? 'pending' : item.decision,
+      }
+    : item)
+}
+
+export function decideShipmentReviewItem(
+  items: ShipmentReviewItem[],
+  currentIndex: number,
+  decision: ShipmentReviewDecision,
+): { items: ShipmentReviewItem[]; nextIndex: number } {
+  const nextItems = items.map((item, index) => index === currentIndex
+    ? { ...item, decision }
+    : item)
+  return {
+    items: nextItems,
+    nextIndex: nextPendingIndex(nextItems, currentIndex),
+  }
+}
+
+export function canExportReviewedShipments(items: ShipmentReviewItem[]): boolean {
+  return items.length > 0
+    && items.every((item) => item.decision === 'approved' || item.decision === 'excluded')
+}
+
 const shipmentContentUnitByProduct: Record<string, string> = {
   大葉: '枚',
   パプリカ: '個',

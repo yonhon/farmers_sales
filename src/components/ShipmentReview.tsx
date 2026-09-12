@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import {
+  canExportReviewedShipments,
+  decideShipmentReviewItem,
   hasRowChanged,
   isPriorityReviewItem,
-  nextPendingIndex,
   parseShipmentReviewCsv,
+  restoreShipmentReviewItems,
   serializeReviewedShipments,
+  shipmentReviewStorageKey,
   sourcePageNumber,
+  updateShipmentReviewItem,
 } from '../lib/shipmentReview'
 import type {
   ShipmentReviewColumn,
@@ -104,25 +108,19 @@ export function ShipmentReview() {
     () => items.filter(isPriorityReviewItem).length,
     [items],
   )
-  const canExport = items.length > 0 && counts.pending === 0 && counts.held === 0
+  const canExport = canExportReviewedShipments(items)
 
   async function loadCsv(file: File | undefined) {
     if (!file) return
     try {
       let parsed = parseShipmentReviewCsv(await file.text()).sort(compareRows)
       if (!parsed.length) throw new Error('確認対象の行がありません。')
-      const nextStorageKey = `shipment-review:v1:${file.name}:${file.size}:${file.lastModified}`
+      const nextStorageKey = shipmentReviewStorageKey(file)
       const saved = window.localStorage.getItem(nextStorageKey)
       if (saved) {
         try {
           const savedItems = JSON.parse(saved) as Array<Pick<ShipmentReviewItem, 'id' | 'row' | 'decision'>>
-          const byId = new Map(savedItems.map((item) => [item.id, item]))
-          parsed = parsed.map((item) => {
-            const savedItem = byId.get(item.id)
-            return savedItem
-              ? { ...item, row: { ...item.row, ...savedItem.row }, decision: savedItem.decision }
-              : item
-          })
+          parsed = restoreShipmentReviewItems(parsed, savedItems)
         } catch {
           // Ignore an unreadable local draft and start from the selected CSV.
         }
@@ -150,21 +148,13 @@ export function ShipmentReview() {
   }
 
   function updateField(column: ShipmentReviewColumn, value: string) {
-    setItems((current) => current.map((item, index) => index === currentIndex
-      ? {
-          ...item,
-          row: { ...item.row, [column]: value },
-          decision: item.decision === 'approved' ? 'pending' : item.decision,
-        }
-      : item))
+    setItems((current) => updateShipmentReviewItem(current, currentIndex, column, value))
   }
 
   function decide(decision: ShipmentReviewDecision) {
-    const next = items.map((item, index) => index === currentIndex
-      ? { ...item, decision }
-      : item)
-    setItems(next)
-    setCurrentIndex(nextPendingIndex(next, currentIndex))
+    const result = decideShipmentReviewItem(items, currentIndex, decision)
+    setItems(result.items)
+    setCurrentIndex(result.nextIndex)
   }
 
   function selectPage(sourcePage: string) {
