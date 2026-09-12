@@ -246,6 +246,16 @@ export function ShipmentReviewDb() {
     ? shipmentReviewPhysicalRow(currentRow.source_page, currentRow.source_row, currentPageRowPosition)
     : 0
   const currentRowTop = sourceRowTopPercent(currentPhysicalRow)
+  const currentStoredProduct = currentRow
+    ? valueText(displayedObservation(currentRow, 'product')?.normalized_value).trim()
+    : ''
+  const bulkProductCorrectionRows = currentStoredProduct && draft?.product.trim()
+    && currentStoredProduct !== draft.product.trim()
+    ? rows.filter((row) => (
+        valueText(displayedObservation(row, 'product')?.normalized_value).trim() === currentStoredProduct
+        && row.row_status !== 'no_shipment'
+      ))
+    : []
 
   function focusCurrentImageRow(smooth: boolean) {
     const scroller = imageScrollRef.current
@@ -412,6 +422,44 @@ export function ShipmentReviewDb() {
     }
   }
 
+  async function applyProductCorrectionToMatchingRows() {
+    if (!currentRow || !batch || !draft || bulkProductCorrectionRows.length < 2) return
+    const nextProduct = draft.product.trim()
+    if (!window.confirm(
+      `読取品名「${currentStoredProduct}」の${bulkProductCorrectionRows.length}行を「${nextProduct}」へ修正しますか？\n各行は確認中に戻るため、画像を確認して承認してください。`,
+    )) return
+    setOperation({ kind: 'saving', message: '同じ誤読の品目をまとめて修正しています…', retryable: false })
+    try {
+      for (const row of bulkProductCorrectionRows) {
+        await prepareRow(row)
+        const previous = displayedObservation(row, 'product')
+        await apply({
+          shipment_review_row_id: row.shipment_review_row_id,
+          expected_row_status: 'in_review',
+          action_type: 'correct_value',
+          field_name: 'product',
+          raw_value: previous?.raw_value ?? currentStoredProduct,
+          normalized_value: nextProduct,
+          confidence: 'high',
+          evidence: {
+            source: 'shipment_review_ui',
+            bulk_product_correction: true,
+            previous_product: currentStoredProduct,
+          },
+          notes: `同じ読取品名「${currentStoredProduct}」を一括修正`,
+        })
+      }
+      await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id)
+      setOperation({
+        kind: 'success',
+        message: `${bulkProductCorrectionRows.length}行の品目を修正しました。各行を画像と照合して承認してください。`,
+        retryable: false,
+      })
+    } catch (error) {
+      setOperation(errorState(error))
+    }
+  }
+
   async function decide(actionType: 'approve' | 'defer' | 'mark_no_shipment' | 'reject_row') {
     if (!currentRow || !batch || !draft) return
     if (actionType !== 'approve' && !decisionReason.trim()) {
@@ -569,6 +617,7 @@ export function ShipmentReviewDb() {
                   return <div className={`review-field${field.key === 'product' || fieldCandidates.length > 3 ? ' wide' : ''}`} key={field.key}>
                     <label htmlFor={inputId}>{field.label}</label>
                     <input id={inputId} type="text" inputMode={field.inputMode} value={draft[field.key]} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDraft({ ...draft, [field.key]: event.target.value })} onBlur={field.key === 'content_value' || field.key === 'content_unit' ? () => setDraft((value) => value ? inferMissingDraftUnit(value) : value) : undefined} />
+                    {field.key === 'product' && bulkProductCorrectionRows.length > 1 && <button className="secondary-button compact review-bulk-product-correction" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void applyProductCorrectionToMatchingRows()}>同じ「{currentStoredProduct}」表記の{bulkProductCorrectionRows.length}行を一括修正</button>}
                     {fieldCandidates.length > 0 && <div className="review-field-candidates" aria-label={`${field.label}の修正候補`}><span>候補をクリックして採用</span>{fieldCandidates.map((candidate) => <div className="review-candidate-chip" key={candidate.shipment_field_observation_id}><button type="button" className="review-candidate-value" disabled={isBusy} title={`採用（確度: ${candidate.confidence}）`} onClick={() => void actOnCandidate(candidate, true)}>{valueText(candidate.normalized_value)}を採用</button><button type="button" className="review-candidate-reject" disabled={isBusy} aria-label={`${field.label}候補 ${valueText(candidate.normalized_value)} を却下`} title="候補を却下" onClick={() => void actOnCandidate(candidate, false)}>却下</button></div>)}</div>}
                   </div>
                 })}</div>

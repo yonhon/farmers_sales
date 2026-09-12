@@ -779,6 +779,7 @@ tbody tr:last-child td { border-bottom: 0; }
   background: white;
 }
 .review-field > input:focus { outline: none; border-color: var(--leaf); box-shadow: 0 0 0 3px rgba(77, 139, 101, 0.14); }
+.review-field .review-bulk-product-correction { width: fit-content; margin-top: 2px; }
 .review-field-candidates { display: flex; align-items: center; gap: 5px; overflow-x: auto; padding: 1px 0 2px; }
 .review-field-candidates > span { flex: 0 0 auto; color: var(--ink-muted); font-size: 0.65rem; font-weight: 700; }
 .review-candidate-chip {
