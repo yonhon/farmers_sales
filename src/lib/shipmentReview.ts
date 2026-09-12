@@ -51,6 +51,16 @@ export function inferShipmentContentUnit(contentValue: string, productName = '')
   return numericValue >= 30 ? 'g' : shipmentContentUnitByProduct[productName.trim()] ?? ''
 }
 
+export function completeShipmentContentUnit(
+  currentUnit: string,
+  contentValue: string,
+  productName = '',
+  preserveMissing = false,
+): string {
+  if (currentUnit.trim() || preserveMissing) return currentUnit
+  return inferShipmentContentUnit(contentValue, productName)
+}
+
 function parseCsvRecords(value: string): string[][] {
   const records: string[][] = []
   let record: string[] = []

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   SHIPMENT_REVIEW_COLUMNS,
+  completeShipmentContentUnit,
   hasRowChanged,
   inferShipmentContentUnit,
   isPriorityReviewItem,
@@ -44,6 +45,12 @@ describe('shipment review CSV', () => {
     expect(inferShipmentContentUnit('100')).toBe('g')
     expect(inferShipmentContentUnit('')).toBe('')
     expect(inferShipmentContentUnit('不明', 'パプリカ')).toBe('')
+  })
+
+  it('preserves a unit that the reviewer explicitly cleared', () => {
+    expect(completeShipmentContentUnit('', '2', 'パプリカ')).toBe('個')
+    expect(completeShipmentContentUnit('', '2', 'パプリカ', true)).toBe('')
+    expect(completeShipmentContentUnit('', '100', '未登録品目', true)).toBe('')
   })
 
   it('parses the monthly schema and preserves quoted values', () => {

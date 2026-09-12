@@ -19,7 +19,7 @@ import type {
   ShipmentReviewIssue,
   ShipmentReviewRowStatus,
 } from '../lib/shipmentReviewClient'
-import { inferShipmentContentUnit, sourcePageNumber } from '../lib/shipmentReview'
+import { completeShipmentContentUnit, sourcePageNumber } from '../lib/shipmentReview'
 import { shipmentReviewPhysicalRow } from '../lib/shipmentReviewImageRows'
 
 const selectedBatchStorageKey = 'shipment-review:selected-batch:v2'
@@ -63,6 +63,15 @@ function displayedObservation(row: ShipmentReviewDbRow, field: ShipmentReviewFie
   return primaryShipmentReviewObservation(row, field)
 }
 
+function isIntentionallyMissing(observation: ShipmentReviewObservation | null) {
+  return Boolean(
+    observation
+    && observation.normalized_value == null
+    && observation.value_source === 'human_corrected'
+    && observation.evidence.intentional_missing === true,
+  )
+}
+
 function valueText(value: unknown) {
   if (value === null || value === undefined) return ''
   return typeof value === 'string' ? value : String(value)
@@ -82,13 +91,18 @@ function sourceRowTopPercent(sourceRow: number) {
 }
 
 function draftFor(row: ShipmentReviewDbRow): Draft {
+  const unitObservation = displayedObservation(row, 'content_unit')
+  const preserveMissingUnit = isIntentionallyMissing(unitObservation)
   const next = Object.fromEntries(fieldDefinitions.map(({ key }) => [
     key,
     valueText(displayedObservation(row, key)?.normalized_value),
   ])) as Draft
-  if (!next.content_unit.trim()) {
-    next.content_unit = inferShipmentContentUnit(next.content_value, next.product)
-  }
+  next.content_unit = completeShipmentContentUnit(
+    next.content_unit,
+    next.content_value,
+    next.product,
+    preserveMissingUnit,
+  )
   return next
 }
 
@@ -167,6 +181,7 @@ export function ShipmentReviewDb() {
   const [batch, setBatch] = useState<ShipmentReviewBatch | null>(null)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [preserveMissingUnit, setPreserveMissingUnit] = useState(false)
   const [decisionReason, setDecisionReason] = useState('')
   const [imageUrls, setImageUrls] = useState<Record<string, string>>({})
   const [bundleName, setBundleName] = useState('')
@@ -207,8 +222,11 @@ export function ShipmentReviewDb() {
   useEffect(() => {
     if (!currentRow) {
       setDraft(null)
+      setPreserveMissingUnit(false)
       return
     }
+    const unitObservation = displayedObservation(currentRow, 'content_unit')
+    setPreserveMissingUnit(isIntentionallyMissing(unitObservation))
     setDraft(draftFor(currentRow))
     setDecisionReason(currentRow.comment ?? '')
   }, [currentRow])
@@ -356,11 +374,20 @@ export function ShipmentReviewDb() {
   }
 
   function inferMissingDraftUnit(value: Draft): Draft {
-    if (value.content_unit.trim()) return value
     return {
       ...value,
-      content_unit: inferShipmentContentUnit(value.content_value, value.product),
+      content_unit: completeShipmentContentUnit(
+        value.content_unit,
+        value.content_value,
+        value.product,
+        preserveMissingUnit,
+      ),
     }
+  }
+
+  function updateDraftField(field: ShipmentReviewField, value: string) {
+    setDraft((current) => current ? { ...current, [field]: value } : current)
+    if (field === 'content_unit') setPreserveMissingUnit(!value.trim())
   }
 
   async function persistDraftValues(row: ShipmentReviewDbRow, value: Draft, rowIsPrepared = false) {
@@ -654,7 +681,7 @@ export function ShipmentReviewDb() {
                   const inputId = `shipment-review-${field.key}`
                   return <div className={`review-field${field.key === 'product' || fieldCandidates.length > 3 ? ' wide' : ''}`} key={field.key}>
                     <label htmlFor={inputId}>{field.label}</label>
-                    <input id={inputId} type="text" inputMode={field.inputMode} value={draft[field.key]} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDraft({ ...draft, [field.key]: event.target.value })} onBlur={field.key === 'content_value' || field.key === 'content_unit' ? () => setDraft((value) => value ? inferMissingDraftUnit(value) : value) : undefined} />
+                    <input id={inputId} type="text" inputMode={field.inputMode} value={draft[field.key]} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => updateDraftField(field.key, event.target.value)} onBlur={field.key === 'content_value' ? () => setDraft((value) => value ? inferMissingDraftUnit(value) : value) : undefined} />
                     {field.key === 'product' && bulkProductCorrectionRows.length > 1 && <button className="secondary-button compact review-bulk-product-correction" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void applyProductCorrectionToMatchingRows()}>同じ「{currentStoredProduct}」表記の{bulkProductCorrectionRows.length}行を一括修正</button>}
                     {fieldCandidates.length > 0 && <div className="review-field-candidates" aria-label={`${field.label}の修正候補`}><span>候補をクリックして採用</span>{fieldCandidates.map((candidate) => <div className="review-candidate-chip" key={candidate.shipment_field_observation_id}><button type="button" className="review-candidate-value" disabled={isBusy} title={`採用（確度: ${candidate.confidence}）`} onClick={() => void actOnCandidate(candidate, true)}>{valueText(candidate.normalized_value)}を採用</button><button type="button" className="review-candidate-reject" disabled={isBusy} aria-label={`${field.label}候補 ${valueText(candidate.normalized_value)} を却下`} title="候補を却下" onClick={() => void actOnCandidate(candidate, false)}>却下</button></div>)}</div>}
                   </div>
