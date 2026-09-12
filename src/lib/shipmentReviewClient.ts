@@ -32,6 +32,18 @@ export function isShipmentReviewCandidate(observation: ShipmentReviewObservation
     && typeof observation.evidence.candidate_group_key === 'string'
 }
 
+export function primaryShipmentReviewObservation(
+  row: ShipmentReviewDbRow,
+  field: ShipmentReviewField,
+) {
+  const observations = row.observations.filter((item) => item.field_name === field)
+  return observations.find((item) => item.review_status === 'accepted')
+    ?? observations.find((item) => (
+      item.review_status === 'proposed' && !isShipmentReviewCandidate(item)
+    ))
+    ?? null
+}
+
 export function actionableShipmentReviewCandidates(row: ShipmentReviewDbRow) {
   const seen = new Set<string>()
   return row.observations.filter((candidate) => {

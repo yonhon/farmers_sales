@@ -6,7 +6,7 @@ import {
   canFinalizeShipmentReview,
   createShipmentReviewRequestId,
   getShipmentReviewApi,
-  isShipmentReviewCandidate,
+  primaryShipmentReviewObservation,
 } from '../lib/shipmentReviewClient'
 import type {
   ShipmentReviewAction,
@@ -15,6 +15,7 @@ import type {
   ShipmentReviewDbRow,
   ShipmentReviewField,
   ShipmentReviewObservation,
+  ShipmentReviewIssue,
   ShipmentReviewRowStatus,
 } from '../lib/shipmentReviewClient'
 import { inferShipmentContentUnit, sourcePageNumber } from '../lib/shipmentReview'
@@ -58,11 +59,7 @@ function compareRows(left: ShipmentReviewDbRow, right: ShipmentReviewDbRow) {
 }
 
 function displayedObservation(row: ShipmentReviewDbRow, field: ShipmentReviewField) {
-  const observations = row.observations.filter((item) => item.field_name === field)
-  return observations.find((item) => item.review_status === 'accepted')
-    ?? observations.find((item) => item.review_status === 'proposed' && !isShipmentReviewCandidate(item))
-    ?? observations.find((item) => item.review_status === 'proposed')
-    ?? null
+  return primaryShipmentReviewObservation(row, field)
 }
 
 function valueText(value: unknown) {
@@ -103,6 +100,17 @@ function normalizedValue(field: ShipmentReviewField, value: string): unknown {
     return number
   }
   return trimmed
+}
+
+function normalizedValuesEqual(field: ShipmentReviewField, stored: unknown, draftValue: string) {
+  const next = normalizedValue(field, draftValue)
+  if (stored === null || stored === undefined || next === null) {
+    return (stored === null || stored === undefined) && next === null
+  }
+  if (field === 'content_value' || field === 'unit_price_yen' || field === 'shipment_package_quantity') {
+    return Number(stored) === next
+  }
+  return String(stored).trim() === next
 }
 
 function quoteCsv(value: unknown) {
@@ -358,15 +366,22 @@ export function ShipmentReviewDb() {
     if (!rowIsPrepared) await prepareRow(row)
     for (const { key } of fieldDefinitions) {
       const previous = displayedObservation(row, key)
+      const nextValue = normalizedValue(key, value[key])
+      if (previous?.review_status === 'accepted'
+        && normalizedValuesEqual(key, previous.normalized_value, value[key])) continue
       await apply({
         shipment_review_row_id: row.shipment_review_row_id,
         expected_row_status: 'in_review',
         action_type: 'correct_value',
         field_name: key,
         raw_value: previous?.raw_value ?? value[key],
-        normalized_value: normalizedValue(key, value[key]),
+        normalized_value: nextValue,
         confidence: 'high',
-        evidence: { source: 'shipment_review_ui', confirmation: true },
+        evidence: {
+          source: 'shipment_review_ui',
+          confirmation: true,
+          intentional_missing: nextValue === null,
+        },
       })
     }
   }
@@ -404,7 +419,7 @@ export function ShipmentReviewDb() {
     }
   }
 
-  async function closeIssue(issueId: string, severity: 'info' | 'warning' | 'error') {
+  async function closeIssue(issue: ShipmentReviewIssue) {
     if (!currentRow || !batch || !draft) return
     setOperation({ kind: 'saving', message: '警告の処理結果を保存しています…', retryable: false })
     try {
@@ -413,19 +428,27 @@ export function ShipmentReviewDb() {
       await prepareRow(currentRow)
       await persistDraftValues(currentRow, completedDraft, true)
       const detail = await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id)
-      const refreshedIssue = detail.rows
-        .flatMap((row) => row.issues)
-        .find((issue) => issue.shipment_review_issue_id === issueId)
-      if (!refreshedIssue || refreshedIssue.issue_status !== 'open') {
+      const refreshedRow = detail.rows.find((row) => (
+        row.shipment_review_row_id === currentRow.shipment_review_row_id
+      ))
+      const refreshedIssue = refreshedRow?.issues.find((item) => (
+        item.shipment_review_issue_id === issue.shipment_review_issue_id
+        && item.issue_status === 'open'
+      )) ?? refreshedRow?.issues.find((item) => (
+        item.issue_status === 'open'
+        && item.code === issue.code
+        && item.field_name === issue.field_name
+      ))
+      if (!refreshedIssue) {
         setOperation({ kind: 'success', message: '入力内容を保存し、警告を自動解決しました。', retryable: false })
         return
       }
       await apply({
         shipment_review_row_id: currentRow.shipment_review_row_id,
         expected_row_status: 'in_review',
-        action_type: severity === 'error' ? 'resolve_issue' : 'accept_issue',
-        issue_id: issueId,
-        notes: severity === 'error' ? '入力値を確認・修正して解決' : '内容を確認して許容',
+        action_type: refreshedIssue.severity === 'error' ? 'resolve_issue' : 'accept_issue',
+        issue_id: refreshedIssue.shipment_review_issue_id,
+        notes: refreshedIssue.severity === 'error' ? '入力値を確認・修正して解決' : '内容を確認して許容',
       })
       await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id)
       setOperation({ kind: 'success', message: '警告の処理結果を保存しました。', retryable: false })
@@ -480,7 +503,7 @@ export function ShipmentReviewDb() {
     }
     setOperation({ kind: 'saving', message: '行の判断を保存しています…', retryable: false })
     try {
-      const nextRowId = actionType === 'approve'
+      const nextRowId = actionType === 'approve' || actionType === 'defer'
         ? rows[currentIndex + 1]?.shipment_review_row_id
         : undefined
       await prepareRow(currentRow)
@@ -498,8 +521,10 @@ export function ShipmentReviewDb() {
       await refreshBatch(batch.import_batch_id, nextRowId ?? currentRow.shipment_review_row_id)
       setOperation({
         kind: 'success',
-        message: actionType === 'approve' && nextRowId
-          ? '入力値と承認をDBへ保存し、次の行へ移動しました。'
+        message: nextRowId
+          ? actionType === 'approve'
+            ? '入力値と承認をDBへ保存し、次の行へ移動しました。'
+            : '保留をDBへ保存し、次の行へ移動しました。'
           : '行の判断をDBへ保存しました。',
         retryable: false,
       })
@@ -634,7 +659,7 @@ export function ShipmentReviewDb() {
                   </div>
                 })}</div>
 
-                {openIssues.length > 0 && <details className="review-issues" key={currentRow.shipment_review_row_id} open={openErrorCount > 0}><summary><strong>警告・確認事項</strong><span>{openErrorCount > 0 && `エラー ${openErrorCount}件`}{openErrorCount > 0 && openWarningCount > 0 && '・'}{openWarningCount > 0 && `警告 ${openWarningCount}件`}{(openErrorCount > 0 || openWarningCount > 0) && openInfoCount > 0 && '・'}{openInfoCount > 0 && `情報 ${openInfoCount}件`}</span></summary><p className="review-issue-guidance">入力値を保存した後、該当する警告を解決してください。</p><div className="review-db-list">{openIssues.map((issue) => <div className={`review-db-item ${issue.severity}`} key={issue.shipment_review_issue_id}><div><strong>{issueTitle(issue.code, issue.field_name, issue.severity)}</strong><details className="review-issue-technical"><summary>詳細</summary><code>{issue.code}</code><span>{issue.message}</span></details></div><button type="button" className="secondary-button compact" disabled={isBusy} onClick={() => void closeIssue(issue.shipment_review_issue_id, issue.severity)}>{issue.severity === 'error' ? '修正済みとして解決' : '確認して許容'}</button></div>)}</div></details>}
+                {openIssues.length > 0 && <details className="review-issues" key={currentRow.shipment_review_row_id} open={openErrorCount > 0}><summary><strong>警告・確認事項</strong><span>{openErrorCount > 0 && `エラー ${openErrorCount}件`}{openErrorCount > 0 && openWarningCount > 0 && '・'}{openWarningCount > 0 && `警告 ${openWarningCount}件`}{(openErrorCount > 0 || openWarningCount > 0) && openInfoCount > 0 && '・'}{openInfoCount > 0 && `情報 ${openInfoCount}件`}</span></summary><p className="review-issue-guidance">入力値を保存した後、該当する警告を解決してください。</p><div className="review-db-list">{openIssues.map((issue) => <div className={`review-db-item ${issue.severity}`} key={issue.shipment_review_issue_id}><div><strong>{issueTitle(issue.code, issue.field_name, issue.severity)}</strong><details className="review-issue-technical"><summary>詳細</summary><code>{issue.code}</code><span>{issue.message}</span></details></div><button type="button" className="secondary-button compact" disabled={isBusy} onClick={() => void closeIssue(issue)}>{issue.severity === 'error' ? '修正済みとして解決' : '確認して許容'}</button></div>)}</div></details>}
 
                 <details className="review-history"><summary>操作履歴（{currentRow.actions.length}件）</summary>{currentRow.actions.length ? <ol>{currentRow.actions.map((action) => <li key={action.shipment_review_action_id}><time>{new Date(action.acted_at).toLocaleString('ja-JP')}</time> {action.action_type}{action.notes ? ` — ${action.notes}` : ''}</li>)}</ol> : <p>操作履歴はまだありません。</p>}</details>
                 <div className="review-action-dock">

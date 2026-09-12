@@ -5,6 +5,7 @@ import {
   actionableShipmentReviewCandidates,
   canFinalizeShipmentReview,
   createShipmentReviewApi,
+  primaryShipmentReviewObservation,
   type ShipmentReviewBackend,
   type ShipmentReviewDbRow,
 } from './shipmentReviewClient'
@@ -58,6 +59,24 @@ describe('shipment review API client', () => {
       'content_unit',
       ...Array(7).fill('unit_price_yen'),
     ])
+  })
+
+  it('does not present an unaccepted candidate as the current field value', () => {
+    const candidate = {
+      shipment_field_observation_id: 'candidate-content',
+      field_name: 'content_value',
+      raw_value: null,
+      normalized_value: '1',
+      value_source: 'rule_inferred',
+      confidence: 'medium',
+      review_status: 'proposed' as const,
+      evidence: { candidate_group_key: 'candidate-group' },
+      recorded_at: '2026-09-12T00:00:00Z',
+    }
+    const row = { observations: [candidate] } as unknown as ShipmentReviewDbRow
+
+    expect(primaryShipmentReviewObservation(row, 'content_value')).toBeNull()
+    expect(actionableShipmentReviewCandidates(row)).toEqual([candidate])
   })
 
   it('enables finalization only when at least one row is approved and all rows are decided', () => {
