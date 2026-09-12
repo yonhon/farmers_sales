@@ -299,3 +299,9 @@ export function getShipmentReviewApi() {
 export function createShipmentReviewRequestId() {
   return crypto.randomUUID()
 }
+
+export function shipmentReviewDecisionAdvances(
+  actionType: 'approve' | 'defer' | 'mark_no_shipment' | 'reject_row',
+) {
+  return actionType === 'approve' || actionType === 'defer' || actionType === 'mark_no_shipment'
+}

@@ -6,6 +6,7 @@ import {
   canFinalizeShipmentReview,
   createShipmentReviewApi,
   primaryShipmentReviewObservation,
+  shipmentReviewDecisionAdvances,
   type ShipmentReviewBackend,
   type ShipmentReviewDbRow,
 } from './shipmentReviewClient'
@@ -85,6 +86,13 @@ describe('shipment review API client', () => {
     expect(canFinalizeShipmentReview([{ row_status: 'approved' }, { row_status: 'deferred' }])).toBe(false)
     expect(canFinalizeShipmentReview([{ row_status: 'no_shipment' }])).toBe(false)
     expect(canFinalizeShipmentReview([{ row_status: 'approved' }, { row_status: 'no_shipment' }])).toBe(true)
+  })
+
+  it('advances after completed decisions except rejection', () => {
+    expect(shipmentReviewDecisionAdvances('approve')).toBe(true)
+    expect(shipmentReviewDecisionAdvances('defer')).toBe(true)
+    expect(shipmentReviewDecisionAdvances('mark_no_shipment')).toBe(true)
+    expect(shipmentReviewDecisionAdvances('reject_row')).toBe(false)
   })
 
   it('reads the shipment_input feature flag and fails closed for missing rows', async () => {

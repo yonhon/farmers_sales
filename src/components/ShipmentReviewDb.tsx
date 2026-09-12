@@ -7,6 +7,7 @@ import {
   createShipmentReviewRequestId,
   getShipmentReviewApi,
   primaryShipmentReviewObservation,
+  shipmentReviewDecisionAdvances,
 } from '../lib/shipmentReviewClient'
 import type {
   ShipmentReviewAction,
@@ -503,7 +504,7 @@ export function ShipmentReviewDb() {
     }
     setOperation({ kind: 'saving', message: '行の判断を保存しています…', retryable: false })
     try {
-      const nextRowId = actionType === 'approve' || actionType === 'defer'
+      const nextRowId = shipmentReviewDecisionAdvances(actionType)
         ? rows[currentIndex + 1]?.shipment_review_row_id
         : undefined
       await prepareRow(currentRow)
