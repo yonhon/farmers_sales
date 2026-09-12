@@ -284,6 +284,7 @@ export function ShipmentReviewDb() {
       const nextIndex = nextRows.findIndex((row) => row.shipment_review_row_id === preferredRowId)
       if (nextIndex >= 0) setCurrentIndex(nextIndex)
     }
+    return detail
   }
 
   async function selectBatch(importBatchId: string) {
@@ -404,10 +405,21 @@ export function ShipmentReviewDb() {
   }
 
   async function closeIssue(issueId: string, severity: 'info' | 'warning' | 'error') {
-    if (!currentRow || !batch) return
+    if (!currentRow || !batch || !draft) return
     setOperation({ kind: 'saving', message: '警告の処理結果を保存しています…', retryable: false })
     try {
+      const completedDraft = inferMissingDraftUnit(draft)
+      setDraft(completedDraft)
       await prepareRow(currentRow)
+      await persistDraftValues(currentRow, completedDraft, true)
+      const detail = await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id)
+      const refreshedIssue = detail.rows
+        .flatMap((row) => row.issues)
+        .find((issue) => issue.shipment_review_issue_id === issueId)
+      if (!refreshedIssue || refreshedIssue.issue_status !== 'open') {
+        setOperation({ kind: 'success', message: '入力内容を保存し、警告を自動解決しました。', retryable: false })
+        return
+      }
       await apply({
         shipment_review_row_id: currentRow.shipment_review_row_id,
         expected_row_status: 'in_review',
