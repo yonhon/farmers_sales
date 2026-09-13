@@ -21,6 +21,10 @@ import type {
 } from '../lib/shipmentReviewClient'
 import { completeShipmentContentUnit, sourcePageNumber } from '../lib/shipmentReview'
 import { shipmentReviewPhysicalRow } from '../lib/shipmentReviewImageRows'
+import {
+  serializeShipmentReviewSnapshot,
+  shipmentReviewSnapshotFilename,
+} from '../lib/shipmentReviewSnapshot'
 
 const selectedBatchStorageKey = 'shipment-review:selected-batch:v2'
 
@@ -159,6 +163,21 @@ function downloadAuditCsv(rows: ShipmentReviewDbRow[]) {
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = 'shipment_review_audit.csv'
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function downloadAuditSnapshot(batch: ShipmentReviewBatch) {
+  const blob = new Blob(
+    [serializeShipmentReviewSnapshot(batch)],
+    { type: 'application/json;charset=utf-8' },
+  )
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = shipmentReviewSnapshotFilename(batch)
   document.body.append(anchor)
   anchor.click()
   anchor.remove()
@@ -644,6 +663,7 @@ export function ShipmentReviewDb() {
             <div className={`review-batch-actions${canFinalize ? ' ready' : ''}`}>
               <span>{batch.finalized_at ? '本番反映済み' : canFinalize ? '反映準備完了' : '全行判断後に反映'}</span>
               <button className="secondary-button compact" type="button" disabled={isBusy} onClick={() => downloadAuditCsv(rows)}>監査CSV</button>
+              <button className="secondary-button compact" type="button" disabled={isBusy} onClick={() => downloadAuditSnapshot(batch)}>完全監査JSON</button>
               <button className="primary-button compact" type="button" disabled={!canFinalize || isBusy} onClick={() => void finalizeBatch()}>本番反映</button>
             </div>
           </div>

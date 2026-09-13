@@ -84,9 +84,15 @@ export type ShipmentReviewActionRecord = {
   shipment_review_action_id: string
   action_type: string
   field_name: ShipmentReviewField | null
+  observation_id?: string | null
+  shipment_review_issue_id?: string | null
   from_status: ShipmentReviewRowStatus | null
   to_status: ShipmentReviewRowStatus | null
+  evidence?: Record<string, unknown>
   notes: string | null
+  acted_by?: string | null
+  request_id?: string | null
+  request_payload_hash?: string | null
   acted_at: string
 }
 
@@ -122,6 +128,7 @@ export type ShipmentReviewBatchSummary = {
 
 export type ShipmentReviewBatch = {
   import_batch_id: string
+  bundle_sha256?: string
   bundle_schema_version: number
   source_month: string
   report_version: number
