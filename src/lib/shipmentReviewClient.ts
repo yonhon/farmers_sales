@@ -86,6 +86,17 @@ export function actionableShipmentReviewCandidates(row: ShipmentReviewDbRow) {
   })
 }
 
+export type TaxAdjustedSalesMatch = {
+  report_date: string
+  sales_unit_price_yen: number
+  sold_quantity: number
+}
+
+export type TaxAdjustedSalesReference = {
+  shipment_unit_price_yen: number | null
+  matches: TaxAdjustedSalesMatch[]
+}
+
 export type ShipmentReviewIssue = {
   shipment_review_issue_id: string
   field_name: ShipmentReviewField | null
@@ -309,6 +320,17 @@ export function createShipmentReviewApi(client: ShipmentReviewBackend) {
       return requireObject<Record<string, unknown>>(
         await rpc('finalize_shipment_review_batch', { p_import_batch_id: importBatchId }),
         '本番反映',
+      )
+    },
+
+    // Evidence for an open tax_adjusted_price_match_candidate issue: the actual sales-side price(s)
+    // that only matched the row's accepted unit price through the tax-exclusive rounding.
+    async taxAdjustedSalesReference(shipmentReviewRowId: string) {
+      return requireObject<TaxAdjustedSalesReference>(
+        await rpc('shipment_review_tax_adjusted_sales_reference', {
+          p_shipment_review_row_id: shipmentReviewRowId,
+        }),
+        '税調整後の販売実績',
       )
     },
   }

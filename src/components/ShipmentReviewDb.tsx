@@ -19,6 +19,7 @@ import type {
   ShipmentReviewObservation,
   ShipmentReviewIssue,
   ShipmentReviewRowStatus,
+  TaxAdjustedSalesReference,
 } from '../lib/shipmentReviewClient'
 import { completeShipmentContentUnit, sourcePageNumber } from '../lib/shipmentReview'
 import { shipmentReviewPhysicalRow } from '../lib/shipmentReviewImageRows'
@@ -224,6 +225,8 @@ export function ShipmentReviewDb() {
   const [bundleName, setBundleName] = useState('')
   const [zoom, setZoom] = useState(100)
   const [operation, setOperation] = useState<OperationState>({ kind: 'idle', message: '', retryable: false })
+  const [taxAdjustedReference, setTaxAdjustedReference] = useState<TaxAdjustedSalesReference | null>(null)
+  const [taxAdjustedReferenceError, setTaxAdjustedReferenceError] = useState(false)
   const imageScrollRef = useRef<HTMLDivElement>(null)
   const sourceImageRef = useRef<HTMLImageElement>(null)
   const rowRailRef = useRef<HTMLDivElement>(null)
@@ -307,12 +310,14 @@ export function ShipmentReviewDb() {
   const pageRows = currentRow
     ? rows.map((row, index) => ({ row, index })).filter(({ row }) => row.source_page === currentRow.source_page)
     : []
-  const currentPageRowPosition = pageRows.findIndex(({ index }) => index === currentIndex)
   const openIssues = currentRow?.issues.filter((issue) => issue.issue_status === 'open') ?? []
   const candidates = currentRow ? actionableShipmentReviewCandidates(currentRow) : []
   const openErrorCount = openIssues.filter((issue) => issue.severity === 'error').length
   const openWarningCount = openIssues.filter((issue) => issue.severity === 'warning').length
   const openInfoCount = openIssues.filter((issue) => issue.severity === 'info').length
+  const openTaxAdjustedPriceIssue = openIssues.find((issue) => (
+    issue.code === 'tax_adjusted_price_match_candidate' && issue.field_name === 'unit_price_yen'
+  )) ?? null
   const isBusy = operation.kind === 'saving'
   const canFinalize = Boolean(batch)
     && !batch?.finalized_at
@@ -320,8 +325,8 @@ export function ShipmentReviewDb() {
     && rows.some((row) => row.row_status === 'approved')
     && rows.every((row) => row.row_status === 'approved' || row.row_status === 'no_shipment')
   const pageImageUrl = currentRow ? imageUrls[currentRow.source_page] : undefined
-  const currentPhysicalRow = currentRow && currentPageRowPosition >= 0
-    ? shipmentReviewPhysicalRow(currentRow.source_page, currentRow.source_row, currentPageRowPosition)
+  const currentPhysicalRow = currentRow
+    ? shipmentReviewPhysicalRow(currentRow.source_page, currentRow.source_row)
     : 0
   const currentRowTop = sourceRowTopPercent(currentPhysicalRow)
   const currentStoredProduct = currentRow
@@ -334,6 +339,19 @@ export function ShipmentReviewDb() {
         && row.row_status !== 'no_shipment'
       ))
     : []
+
+  // Live evidence for an open tax-adjusted price match: the sales-side price is not stored in the
+  // review bundle, so it is fetched on demand instead of being derived from the row's own data.
+  useEffect(() => {
+    setTaxAdjustedReference(null)
+    setTaxAdjustedReferenceError(false)
+    if (!openTaxAdjustedPriceIssue || !currentRow) return
+    let active = true
+    getShipmentReviewApi().taxAdjustedSalesReference(currentRow.shipment_review_row_id)
+      .then((reference) => { if (active) setTaxAdjustedReference(reference) })
+      .catch(() => { if (active) setTaxAdjustedReferenceError(true) })
+    return () => { active = false }
+  }, [openTaxAdjustedPriceIssue?.shipment_review_issue_id, currentRow])
 
   function focusCurrentImageRow(smooth: boolean) {
     const scroller = imageScrollRef.current
@@ -760,6 +778,22 @@ export function ShipmentReviewDb() {
                     <input id={inputId} type="text" inputMode={field.inputMode} value={draft[field.key]} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => updateDraftField(field.key, event.target.value)} onBlur={field.key === 'content_value' ? () => setDraft((value) => value ? inferMissingDraftUnit(value) : value) : undefined} />
                     {field.key === 'product' && bulkProductCorrectionRows.length > 1 && <button className="secondary-button compact review-bulk-product-correction" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void applyProductCorrectionToMatchingRows()}>同じ「{currentStoredProduct}」表記の{bulkProductCorrectionRows.length}行を一括修正</button>}
                     {fieldCandidates.length > 0 && <div className="review-field-candidates" aria-label={`${field.label}の修正候補`}><span>候補をクリックして採用</span>{fieldCandidates.map((candidate) => <div className="review-candidate-chip" key={candidate.shipment_field_observation_id}><button type="button" className="review-candidate-value" disabled={isBusy} title={`採用（確度: ${candidate.confidence}）`} onClick={() => void actOnCandidate(candidate, true)}>{valueText(candidate.normalized_value)}を採用</button><button type="button" className="review-candidate-reject" disabled={isBusy} aria-label={`${field.label}候補 ${valueText(candidate.normalized_value)} を却下`} title="候補を却下" onClick={() => void actOnCandidate(candidate, false)}>却下</button></div>)}</div>}
+                    {field.key === 'unit_price_yen' && openTaxAdjustedPriceIssue && (
+                      <div className="review-field-candidates review-field-reference" aria-label="販売実績側の税調整後価格">
+                        <span>販売実績（税込・参考）</span>
+                        {taxAdjustedReferenceError
+                          ? <span className="review-reference-empty">参考価格を取得できませんでした</span>
+                          : !taxAdjustedReference
+                          ? <span className="review-reference-loading">読み込み中…</span>
+                          : taxAdjustedReference.matches.length === 0
+                            ? <span className="review-reference-empty">一致する販売実績が見つかりません</span>
+                            : taxAdjustedReference.matches.map((match) => (
+                                <div className="review-reference-chip" key={`${match.report_date}:${match.sales_unit_price_yen}`}>
+                                  {match.sales_unit_price_yen}円（税抜換算{Math.round(match.sales_unit_price_yen / 1.08)}円・{match.report_date}・{match.sold_quantity}点）
+                                </div>
+                              ))}
+                      </div>
+                    )}
                   </div>
                 })}</div>
 

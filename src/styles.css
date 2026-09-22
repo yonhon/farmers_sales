@@ -867,6 +867,20 @@ tbody tr:last-child td { border-bottom: 0; }
 .review-candidate-value:hover { background: #dcecdf; }
 .review-candidate-reject { padding: 3px 7px; border-left: 1px solid #bed3c4 !important; color: #8b342b; background: #fffaf7; font-size: 0.7rem; font-weight: 700; }
 .review-candidate-reject:hover { background: #f8dfda; }
+.review-field-reference > span:first-child { color: #8b5c13; }
+.review-reference-loading,
+.review-reference-empty { color: var(--ink-muted); font-size: 0.72rem; }
+.review-reference-chip {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border: 1px solid #e1bd7f;
+  border-radius: 7px;
+  color: #714d16;
+  background: #fff8e8;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
 .review-candidate-chip button:disabled { cursor: not-allowed; opacity: 0.55; }
 .edit-indicator { margin: 14px 0 0; color: #8b5c13; font-size: 0.72rem; font-weight: 700; }
 .file-picker select { width: 100%; }

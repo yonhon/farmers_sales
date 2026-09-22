@@ -122,6 +122,15 @@ describe('shipment review API client', () => {
     expect(initialShipmentReviewObservation(accepted, 'product')?.normalized_value).toBe('ピーマン')
   })
 
+  it('fetches the tax-adjusted sales reference for a row by its RPC name and id argument', async () => {
+    const reference = { shipment_unit_price_yen: 237, matches: [{ report_date: '2026-05-07', sales_unit_price_yen: 256, sold_quantity: 4 }] }
+    const { client, rpc } = backend({ rpc: reference })
+    await expect(createShipmentReviewApi(client).taxAdjustedSalesReference('row-1')).resolves.toEqual(reference)
+    expect(rpc).toHaveBeenCalledWith('shipment_review_tax_adjusted_sales_reference', {
+      p_shipment_review_row_id: 'row-1',
+    })
+  })
+
   it('enables finalization only when at least one row is approved and all rows are decided', () => {
     expect(canFinalizeShipmentReview([])).toBe(false)
     expect(canFinalizeShipmentReview([{ row_status: 'unreviewed' }])).toBe(false)
