@@ -297,7 +297,7 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
             </h1>
             <p className="muted">
               {isShipmentReviewRoute
-                ? '原画像と転記値を一巡で照合し、各行を承認・保留・出荷なしに分類します。'
+                ? '原画像と転記値を一巡で照合し、各行を承認・保留・登録取り下げに分類します。'
                 : isImportRoute
                 ? '対象年を選び、複数日分の売上状況をそのまま貼り付けてください。'
                 : selectedProductId

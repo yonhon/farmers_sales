@@ -36,7 +36,11 @@ const statusLabels: Record<ShipmentReviewRowStatus, string> = {
   in_review: '確認中',
   approved: '承認済み',
   deferred: '保留',
-  no_shipment: '出荷なし',
+  // Displayed as a general "withdraw this row from the current production import" outcome, not only
+  // "there was no real shipment": e.g. a discounted (おつとめ品) sale the price-match logic can't yet
+  // verify is also withdrawn this way, so the batch can still finalize. The row_status value and DB
+  // schema are unchanged.
+  no_shipment: '登録取り下げ',
   rejected: '差し戻し',
 }
 
@@ -700,7 +704,7 @@ export function ShipmentReviewDb() {
             <div className="pending"><strong>{counts.unreviewed + counts.in_review}</strong><span>未完了</span></div>
             <div className="approved"><strong>{counts.approved}</strong><span>承認済み</span></div>
             <div className="held"><strong>{counts.deferred}</strong><span>保留</span></div>
-            <div className="excluded"><strong>{counts.no_shipment}</strong><span>出荷なし</span></div>
+            <div className="excluded"><strong>{counts.no_shipment}</strong><span>登録取り下げ</span></div>
             <div className="review-progress-note"><p>v{batch.report_version} / {batch.source_month.slice(0, 7)}</p><small>DBを正本として保存</small></div>
           </section>
 
@@ -801,8 +805,8 @@ export function ShipmentReviewDb() {
 
                 <details className="review-history"><summary>操作履歴（{currentRow.actions.length}件）</summary>{currentRow.actions.length ? <ol>{currentRow.actions.map((action) => <li key={action.shipment_review_action_id}><time>{new Date(action.acted_at).toLocaleString('ja-JP')}</time> {action.action_type}{action.notes ? ` — ${action.notes}` : ''}</li>)}</ol> : <p>操作履歴はまだありません。</p>}</details>
                 <div className="review-action-dock">
-                  <label className="review-decision-reason">判断理由・コメント<input type="text" value={decisionReason} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDecisionReason(event.target.value)} placeholder="保留・出荷なし・差し戻しでは必須" /></label>
-                  <div className="review-action-buttons"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>入力を保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>承認</button><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>出荷なし</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻し</button></div>
+                  <label className="review-decision-reason">判断理由・コメント<input type="text" value={decisionReason} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDecisionReason(event.target.value)} placeholder="保留・登録取り下げ・差し戻しでは必須" /></label>
+                  <div className="review-action-buttons"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>入力を保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>承認</button><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>登録取り下げ</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻し</button></div>
                 </div>
               </div>
             </section>
