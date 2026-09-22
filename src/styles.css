@@ -891,6 +891,9 @@ tbody tr:last-child td { border-bottom: 0; }
   font-weight: 700;
   white-space: nowrap;
 }
+.review-reference-adopt { cursor: pointer; }
+.review-reference-adopt:hover { background: #fff0c9; }
+.review-reference-adopt:disabled { cursor: not-allowed; opacity: 0.55; }
 .review-candidate-chip button:disabled { cursor: not-allowed; opacity: 0.55; }
 .edit-indicator { margin: 14px 0 0; color: #8b5c13; font-size: 0.72rem; font-weight: 700; }
 .file-picker select { width: 100%; }

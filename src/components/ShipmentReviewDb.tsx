@@ -19,6 +19,7 @@ import type {
   ShipmentReviewObservation,
   ShipmentReviewIssue,
   ShipmentReviewRowStatus,
+  TaxAdjustedSalesMatch,
   TaxAdjustedSalesReference,
 } from '../lib/shipmentReviewClient'
 import { completeShipmentContentUnit, sourcePageNumber } from '../lib/shipmentReview'
@@ -81,6 +82,25 @@ function isIntentionallyMissing(observation: ShipmentReviewObservation | null) {
     && observation.value_source === 'human_corrected'
     && observation.evidence.intentional_missing === true,
   )
+}
+
+// Groups tax-adjusted sales matches by price so a price sold on several dates within the window shows
+// as one adoptable button, not one per date.
+function dedupeTaxAdjustedMatches(matches: TaxAdjustedSalesMatch[]) {
+  const groups = new Map<number, { sales_unit_price_yen: number; dates: string[]; totalQuantity: number; matches: TaxAdjustedSalesMatch[] }>()
+  matches.forEach((match) => {
+    const group = groups.get(match.sales_unit_price_yen) ?? {
+      sales_unit_price_yen: match.sales_unit_price_yen,
+      dates: [],
+      totalQuantity: 0,
+      matches: [],
+    }
+    group.dates.push(match.report_date)
+    group.totalQuantity += match.sold_quantity
+    group.matches.push(match)
+    groups.set(match.sales_unit_price_yen, group)
+  })
+  return [...groups.values()].sort((left, right) => left.sales_unit_price_yen - right.sales_unit_price_yen)
 }
 
 function valueText(value: unknown) {
@@ -524,6 +544,32 @@ export function ShipmentReviewDb() {
     }
   }
 
+  // Writes the sales-side (tax-included) price verbatim into unit_price_yen and resolves the
+  // tax_adjusted_price_match_candidate issue in one step. Writing the raw sales price, rather than a
+  // tax-exclusive figure rounded from it, sidesteps the floor/ceiling rounding question entirely: the
+  // exact-match check that other saves rely on then simply succeeds against the real sales_line.
+  async function adoptTaxAdjustedSalesPrice(match: TaxAdjustedSalesMatch) {
+    if (!currentRow || !batch || !draft || !openTaxAdjustedPriceIssue) return
+    const nextDraft = { ...draft, unit_price_yen: String(match.sales_unit_price_yen) }
+    setDraft(nextDraft)
+    setOperation({ kind: 'saving', message: '販売実績の税込単価を出荷単価として保存しています…', retryable: false })
+    try {
+      await prepareRow(currentRow)
+      await persistDraftValues(currentRow, nextDraft, true)
+      await apply({
+        shipment_review_row_id: currentRow.shipment_review_row_id,
+        expected_row_status: 'in_review',
+        action_type: 'accept_issue',
+        issue_id: openTaxAdjustedPriceIssue.shipment_review_issue_id,
+        notes: `販売実績の税込単価${match.sales_unit_price_yen}円（${match.report_date}）をそのまま単価として採用`,
+      })
+      await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id)
+      setOperation({ kind: 'success', message: '単価を販売実績の税込価格に更新し、警告を解消しました。', retryable: false })
+    } catch (error) {
+      setOperation(errorState(error))
+    }
+  }
+
   async function closeIssue(issue: ShipmentReviewIssue) {
     if (!currentRow || !batch || !draft) return
     setOperation({ kind: 'saving', message: '警告の処理結果を保存しています…', retryable: false })
@@ -785,23 +831,30 @@ export function ShipmentReviewDb() {
                     {field.key === 'product' && bulkProductCorrectionRows.length > 1 && <button className="secondary-button compact review-bulk-product-correction" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void applyProductCorrectionToMatchingRows()}>同じ「{currentStoredProduct}」表記の{bulkProductCorrectionRows.length}行を一括修正</button>}
                     {fieldCandidates.length > 0 && <div className="review-field-candidates" aria-label={`${field.label}の修正候補`}><span>候補をクリックして採用</span>{fieldCandidates.map((candidate) => <div className="review-candidate-chip" key={candidate.shipment_field_observation_id}><button type="button" className="review-candidate-value" disabled={isBusy} title={`採用（確度: ${candidate.confidence}）`} onClick={() => void actOnCandidate(candidate, true)}>{valueText(candidate.normalized_value)}を採用</button><button type="button" className="review-candidate-reject" disabled={isBusy} aria-label={`${field.label}候補 ${valueText(candidate.normalized_value)} を却下`} title="候補を却下" onClick={() => void actOnCandidate(candidate, false)}>却下</button></div>)}</div>}
                     {field.key === 'unit_price_yen' && openTaxAdjustedPriceIssue && (
-                      <div className="review-field-reference" aria-label="販売実績側の税調整後価格（参考情報）">
+                      <div className="review-field-reference" aria-label="販売実績側の税込単価を単価として採用">
                         <p className="review-reference-caption">
-                          参考情報：単価欄の{draft.unit_price_yen || '現在の値'}円は、下の販売実績（税込価格）と税抜換算で一致すると判定されています。
-                          <strong>この税込価格を単価欄に転記しないでください。</strong>
-                          問題なければ下の警告欄で「確認して許容」を押してください。
+                          単価欄の{draft.unit_price_yen || '現在の値'}円は、下の販売実績（税込価格）と税抜換算でしか一致しません。
+                          <strong>販売実績の税込価格をそのまま単価として採用</strong>すると、単価欄がその金額に置き換わり、この警告は解消されます。
+                          現在の値のままでよい場合は、採用せず下の警告欄で「確認して許容」を押してください。
                         </p>
                         <div className="review-field-candidates">
                           {taxAdjustedReferenceError
-                            ? <span className="review-reference-empty">参考価格を取得できませんでした</span>
+                            ? <span className="review-reference-empty">販売実績を取得できませんでした</span>
                             : !taxAdjustedReference
                             ? <span className="review-reference-loading">読み込み中…</span>
                             : taxAdjustedReference.matches.length === 0
                               ? <span className="review-reference-empty">一致する販売実績が見つかりません</span>
-                              : taxAdjustedReference.matches.map((match) => (
-                                  <div className="review-reference-chip" key={`${match.report_date}:${match.sales_unit_price_yen}`}>
-                                    販売実績（税込）{match.sales_unit_price_yen}円・{match.report_date}・{match.sold_quantity}点
-                                  </div>
+                              : dedupeTaxAdjustedMatches(taxAdjustedReference.matches).map((group) => (
+                                  <button
+                                    type="button"
+                                    className="review-reference-chip review-reference-adopt"
+                                    key={group.sales_unit_price_yen}
+                                    disabled={isBusy}
+                                    title={`採用すると単価欄が${group.sales_unit_price_yen}円になります`}
+                                    onClick={() => void adoptTaxAdjustedSalesPrice(group.matches[0])}
+                                  >
+                                    税込{group.sales_unit_price_yen}円を単価として採用（{group.dates.join('・')}・計{group.totalQuantity}点）
+                                  </button>
                                 ))}
                         </div>
                       </div>
