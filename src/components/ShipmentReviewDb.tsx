@@ -845,31 +845,45 @@ export function ShipmentReviewDb() {
                     {fieldCandidates.length > 0 && <div className="review-field-candidates" aria-label={`${field.label}の修正候補`}><span>候補をクリックして採用</span>{fieldCandidates.map((candidate) => <div className="review-candidate-chip" key={candidate.shipment_field_observation_id}><button type="button" className="review-candidate-value" disabled={isBusy} title={`採用（確度: ${candidate.confidence}）`} onClick={() => void actOnCandidate(candidate, true)}>{valueText(candidate.normalized_value)}を採用</button><button type="button" className="review-candidate-reject" disabled={isBusy} aria-label={`${field.label}候補 ${valueText(candidate.normalized_value)} を却下`} title="候補を却下" onClick={() => void actOnCandidate(candidate, false)}>却下</button></div>)}</div>}
                     {field.key === 'unit_price_yen' && openTaxAdjustedPriceIssue && (
                       <div className="review-field-reference" aria-label="販売実績側の税込単価を単価として採用">
-                        <p className="review-reference-caption">
-                          単価欄の{draft.unit_price_yen || '現在の値'}円は、下の販売実績（税込価格）と税抜換算でしか一致しません。
-                          <strong>販売実績の税込価格をそのまま単価として採用</strong>すると、単価欄がその金額に置き換わり、この警告は解消されます。
-                          採用しない場合は、販売実績と完全一致する値へ修正するか、行を「登録取下」にしてください（この警告は「確認して許容」では閉じられません）。
-                        </p>
-                        <div className="review-field-candidates">
-                          {taxAdjustedReferenceError
-                            ? <span className="review-reference-empty">販売実績を取得できませんでした</span>
-                            : !taxAdjustedReference
-                            ? <span className="review-reference-loading">読み込み中…</span>
-                            : taxAdjustedReference.matches.length === 0
-                              ? <span className="review-reference-empty">一致する販売実績が見つかりません</span>
-                              : dedupeTaxAdjustedMatches(taxAdjustedReference.matches).map((group) => (
-                                  <button
-                                    type="button"
-                                    className="review-reference-chip review-reference-adopt"
-                                    key={group.sales_unit_price_yen}
-                                    disabled={isBusy}
-                                    title={`採用すると単価欄が${group.sales_unit_price_yen}円になります`}
-                                    onClick={() => void adoptTaxAdjustedSalesPrice(group.matches[0])}
-                                  >
-                                    税込{group.sales_unit_price_yen}円を単価として採用（{group.dates.join('・')}・計{group.totalQuantity}点）
-                                  </button>
-                                ))}
-                        </div>
+                        {taxAdjustedReferenceError ? (
+                          <p className="review-reference-caption">
+                            この行には税調整後一致の警告がありますが、販売実績を取得できませんでした。開き直すか、値を修正するか、行を「登録取下」にしてください。
+                          </p>
+                        ) : !taxAdjustedReference ? (
+                          <p className="review-reference-caption">販売実績を確認しています…</p>
+                        ) : taxAdjustedReference.matches.length === 0 ? (
+                          // The tax_adjusted_price_match_candidate issue is static from bundle import and
+                          // reflects the price at that time. If the price has since been edited to a value
+                          // with no live relationship to any sales record (not even a tax-adjusted one), the
+                          // "採用" wording below would be inaccurate, so this replaces it instead of
+                          // rendering alongside an empty candidate list.
+                          <p className="review-reference-caption">
+                            現在の単価（{draft.unit_price_yen || '現在の値'}円）は、税抜換算でも一致する販売実績が見つかりません。
+                            値を販売実績と完全一致する値へ修正するか、行を「登録取下」にしてください（この警告は「確認して許容」では閉じられません）。
+                          </p>
+                        ) : (
+                          <>
+                            <p className="review-reference-caption">
+                              単価欄の{draft.unit_price_yen || '現在の値'}円は、下の販売実績（税込価格）と税抜換算でしか一致しません。
+                              <strong>販売実績の税込価格をそのまま単価として採用</strong>すると、単価欄がその金額に置き換わり、この警告は解消されます。
+                              採用しない場合は、販売実績と完全一致する値へ修正するか、行を「登録取下」にしてください（この警告は「確認して許容」では閉じられません）。
+                            </p>
+                            <div className="review-field-candidates">
+                              {dedupeTaxAdjustedMatches(taxAdjustedReference.matches).map((group) => (
+                                <button
+                                  type="button"
+                                  className="review-reference-chip review-reference-adopt"
+                                  key={group.sales_unit_price_yen}
+                                  disabled={isBusy}
+                                  title={`採用すると単価欄が${group.sales_unit_price_yen}円になります`}
+                                  onClick={() => void adoptTaxAdjustedSalesPrice(group.matches[0])}
+                                >
+                                  税込{group.sales_unit_price_yen}円を単価として採用（{group.dates.join('・')}・計{group.totalQuantity}点）
+                                </button>
+                              ))}
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
