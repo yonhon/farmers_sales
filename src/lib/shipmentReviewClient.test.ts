@@ -5,6 +5,7 @@ import {
   actionableShipmentReviewCandidates,
   canFinalizeShipmentReview,
   createShipmentReviewApi,
+  initialShipmentReviewObservation,
   primaryShipmentReviewObservation,
   shipmentReviewDecisionAdvances,
   type ShipmentReviewBackend,
@@ -78,6 +79,47 @@ describe('shipment review API client', () => {
 
     expect(primaryShipmentReviewObservation(row, 'content_value')).toBeNull()
     expect(actionableShipmentReviewCandidates(row)).toEqual([candidate])
+  })
+
+  it('keeps the original reading available after a human correction supersedes it', () => {
+    const observation = (
+      id: string,
+      normalized_value: unknown,
+      value_source: string,
+      review_status: 'proposed' | 'accepted' | 'superseded',
+      recorded_at: string,
+      evidence: Record<string, unknown> = {},
+    ) => ({
+      shipment_field_observation_id: id,
+      field_name: 'product' as const,
+      raw_value: null,
+      normalized_value,
+      value_source,
+      confidence: 'high',
+      review_status,
+      evidence,
+      recorded_at,
+    })
+    const row = {
+      observations: [
+        observation('read', 'ピーマン', 'image_read', 'superseded', '2026-09-22T00:00:00Z'),
+        observation('candidate', 'ししとう', 'rule_inferred', 'proposed', '2026-09-22T00:00:01Z', { candidate_group_key: 'g' }),
+        observation('fixed-1', 'みおぎ', 'human_corrected', 'superseded', '2026-09-22T01:00:00Z'),
+        observation('fixed-2', 'ピーマン（みおぎ）', 'human_corrected', 'accepted', '2026-09-22T02:00:00Z'),
+      ],
+    } as unknown as ShipmentReviewDbRow
+
+    expect(primaryShipmentReviewObservation(row, 'product')?.normalized_value).toBe('ピーマン（みおぎ）')
+    expect(initialShipmentReviewObservation(row, 'product')?.normalized_value).toBe('ピーマン')
+    expect(initialShipmentReviewObservation(row, 'content_unit')).toBeNull()
+
+    const accepted = {
+      observations: [
+        observation('read', 'ピーマン', 'image_read', 'superseded', '2026-09-22T00:00:00Z'),
+        observation('candidate', 'ししとう', 'image_read', 'accepted', '2026-09-22T00:00:01Z', { candidate_group_key: 'g' }),
+      ],
+    } as unknown as ShipmentReviewDbRow
+    expect(initialShipmentReviewObservation(accepted, 'product')?.normalized_value).toBe('ピーマン')
   })
 
   it('enables finalization only when at least one row is approved and all rows are decided', () => {

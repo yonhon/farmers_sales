@@ -44,6 +44,24 @@ export function primaryShipmentReviewObservation(
     ?? null
 }
 
+// The value the pre-input (LLM transcription) originally proposed for a field. Corrections supersede
+// it in the database but never delete it, so it stays available for reference after the box is edited.
+// Candidate suggestions and human corrections are not part of the original reading.
+export function initialShipmentReviewObservation(
+  row: ShipmentReviewDbRow,
+  field: ShipmentReviewField,
+) {
+  return row.observations
+    .filter((item) => (
+      item.field_name === field
+      && item.value_source !== 'human_corrected'
+      && item.value_source !== 'missing_accepted'
+      && typeof item.evidence?.candidate_group_key !== 'string'
+    ))
+    .sort((left, right) => left.recorded_at.localeCompare(right.recorded_at))[0]
+    ?? null
+}
+
 export function actionableShipmentReviewCandidates(row: ShipmentReviewDbRow) {
   const seen = new Set<string>()
   return row.observations.filter((candidate) => {

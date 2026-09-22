@@ -6,6 +6,7 @@ import {
   canFinalizeShipmentReview,
   createShipmentReviewRequestId,
   getShipmentReviewApi,
+  initialShipmentReviewObservation,
   primaryShipmentReviewObservation,
   shipmentReviewDecisionAdvances,
 } from '../lib/shipmentReviewClient'
@@ -21,6 +22,7 @@ import type {
 } from '../lib/shipmentReviewClient'
 import { completeShipmentContentUnit, sourcePageNumber } from '../lib/shipmentReview'
 import { shipmentReviewPhysicalRow } from '../lib/shipmentReviewImageRows'
+import { mergeSourceImageUrls } from '../lib/shipmentReviewImages'
 import {
   serializeShipmentReviewSnapshot,
   shipmentReviewSnapshotFilename,
@@ -108,6 +110,22 @@ function draftFor(row: ShipmentReviewDbRow): Draft {
     preserveMissingUnit,
   )
   return next
+}
+
+// What the pre-input (LLM) originally read for a field, shown beside the label so it stays visible
+// after the box is overwritten. An empty reading is shown as 空欄.
+function initialValueText(row: ShipmentReviewDbRow, field: ShipmentReviewField) {
+  const observation = initialShipmentReviewObservation(row, field)
+  return valueText(observation?.normalized_value ?? observation?.raw_value).trim() || '空欄'
+}
+
+function draftDiffersFromInitial(row: ShipmentReviewDbRow, field: ShipmentReviewField, draftValue: string) {
+  const observation = initialShipmentReviewObservation(row, field)
+  try {
+    return !normalizedValuesEqual(field, observation?.normalized_value, draftValue)
+  } catch {
+    return true
+  }
 }
 
 function normalizedValue(field: ShipmentReviewField, value: string): unknown {
@@ -208,6 +226,8 @@ export function ShipmentReviewDb() {
   const [operation, setOperation] = useState<OperationState>({ kind: 'idle', message: '', retryable: false })
   const imageScrollRef = useRef<HTMLDivElement>(null)
   const sourceImageRef = useRef<HTMLImageElement>(null)
+  const rowRailRef = useRef<HTMLDivElement>(null)
+  const imageUrlsRef = useRef<Record<string, string>>({})
 
   const rows = useMemo(() => [...(batch?.rows ?? [])].sort(compareRows), [batch])
   const currentRow = rows[currentIndex] ?? null
@@ -250,9 +270,21 @@ export function ShipmentReviewDb() {
     setDecisionReason(currentRow.comment ?? '')
   }, [currentRow])
 
+  // Object URLs are released only when the screen closes. Releasing them whenever the set changes would
+  // break the images kept from an earlier selection.
   useEffect(() => () => {
-    Object.values(imageUrls).forEach((url) => URL.revokeObjectURL(url))
-  }, [imageUrls])
+    Object.values(imageUrlsRef.current).forEach((url) => URL.revokeObjectURL(url))
+  }, [])
+
+  useEffect(() => {
+    const rail = rowRailRef.current
+    const current = rail?.querySelector<HTMLElement>('[aria-current="true"]')
+    if (!rail || !current) return
+    if (current.offsetTop < rail.scrollTop) rail.scrollTop = Math.max(0, current.offsetTop - 8)
+    else if (current.offsetTop + current.offsetHeight > rail.scrollTop + rail.clientHeight) {
+      rail.scrollTop = current.offsetTop + current.offsetHeight - rail.clientHeight + 8
+    }
+  }, [currentIndex, currentRow?.source_page])
 
   const counts = useMemo(() => {
     const result: Record<ShipmentReviewRowStatus, number> = {
@@ -365,11 +397,15 @@ export function ShipmentReviewDb() {
 
   function loadImages(files: FileList | null) {
     if (!files) return
-    const next: Record<string, string> = {}
-    Array.from(files).forEach((file) => {
-      if (file.type.startsWith('image/')) next[file.name] = URL.createObjectURL(file)
-    })
-    setImageUrls(next)
+    const { urls, added } = mergeSourceImageUrls(
+      imageUrlsRef.current,
+      Array.from(files),
+      (file) => URL.createObjectURL(file),
+      (url) => URL.revokeObjectURL(url),
+    )
+    if (!added) return
+    imageUrlsRef.current = urls
+    setImageUrls(urls)
   }
 
   async function apply(action: Omit<ShipmentReviewAction, 'request_id'>) {
@@ -613,8 +649,8 @@ export function ShipmentReviewDb() {
           </label>
           <label className="file-picker">
             <span>原画像（ローカルのみ）</span>
-            <input type="file" accept="image/*" multiple onChange={(event) => loadImages(event.target.files)} />
-            <small>{Object.keys(imageUrls).length ? `${Object.keys(imageUrls).length}枚を読込済み` : '同じ月の画像をまとめて選択'}</small>
+            <input type="file" accept="image/*" multiple onChange={(event) => { loadImages(event.target.files); event.target.value = '' }} />
+            <small>{Object.keys(imageUrls).length ? `${Object.keys(imageUrls).length}枚を読込済み（続けて選ぶと追加）` : '同じ月の画像を選択（複数回に分けて追加できます）'}</small>
           </label>
           <label className="file-picker">
             <span>DB上のバッチ</span>
@@ -673,9 +709,31 @@ export function ShipmentReviewDb() {
               <div className="panel-heading"><div><p className="section-kicker">SOURCE IMAGE</p><h2>{currentRow.source_page}</h2></div>
                 <label className="image-zoom">表示倍率 {zoom}%<input type="range" min="60" max="180" step="10" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} /></label>
               </div>
-              <div className="source-image-scroll" ref={imageScrollRef}>
-                {pageImageUrl ? <><div className="source-image-stage" style={{ width: `${zoom}%` }}><img ref={sourceImageRef} src={pageImageUrl} alt={`${currentRow.source_page}の原画像`} onLoad={() => focusCurrentImageRow(false)} /><span className="source-row-highlight" style={{ top: `${currentRowTop}%` }} aria-hidden="true" /></div><div className="source-image-scroll-spacer" aria-hidden="true" /></>
-                  : <div className="image-placeholder"><strong>このページの画像が選択されていません</strong><span>画像はSupabaseへ送信されません。</span></div>}
+              <div className="source-image-body">
+                <nav className="source-row-rail" aria-label="このページの行">
+                  <div className="source-row-rail-inner">
+                    <span className="source-row-rail-caption">行</span>
+                    <div className="source-row-rail-list" ref={rowRailRef}>
+                      {pageRows.map(({ row, index }) => (
+                        <button
+                          className={`${index === currentIndex ? 'is-current' : ''} ${row.row_status}`}
+                          type="button"
+                          key={row.shipment_review_row_id}
+                          aria-current={index === currentIndex ? 'true' : undefined}
+                          title={`${row.source_row}行目・${statusLabels[row.row_status]}`}
+                          onClick={() => setCurrentIndex(index)}
+                        >
+                          {row.source_row}
+                          {row.issues.some((issue) => issue.issue_status === 'open' && issue.severity !== 'info') && <span aria-label="警告あり">!</span>}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </nav>
+                <div className="source-image-scroll" ref={imageScrollRef}>
+                  {pageImageUrl ? <><div className="source-image-stage" style={{ width: `${zoom}%` }}><img ref={sourceImageRef} src={pageImageUrl} alt={`${currentRow.source_page}の原画像`} onLoad={() => focusCurrentImageRow(false)} /><span className="source-row-highlight" style={{ top: `${currentRowTop}%` }} aria-hidden="true" /></div><div className="source-image-scroll-spacer" aria-hidden="true" /></>
+                    : <div className="image-placeholder"><strong>このページの画像が選択されていません</strong><span>画像はSupabaseへ送信されません。</span></div>}
+                </div>
               </div>
             </section>
 
@@ -692,15 +750,13 @@ export function ShipmentReviewDb() {
                 </div>
               </header>
               <div className="review-editor-scroll">
-                <details className="review-row-picker"><summary>このページの行を選択（{pageRows.length}行）</summary><div className="review-row-nav" aria-label="このページの行">{pageRows.map(({ row, index }) => <button className={`${index === currentIndex ? 'is-current' : ''} ${row.row_status}`} type="button" key={row.shipment_review_row_id} onClick={() => setCurrentIndex(index)}>{row.source_row}{row.issues.some((issue) => issue.issue_status === 'open' && issue.severity !== 'info') && <span aria-label="警告あり">!</span>}</button>)}</div></details>
-
                 <dl className="raw-observation"><div><dt>出荷日</dt><dd>{currentRow.shipment_date}</dd></div><div><dt>市場</dt><dd>{currentRow.market_code}</dd></div><div><dt>原記載の備考</dt><dd>{currentRow.raw_notes || '—'}</dd></div></dl>
 
                 <div className="review-fields">{fieldDefinitions.map((field) => {
                   const fieldCandidates = candidates.filter((candidate) => candidate.field_name === field.key)
                   const inputId = `shipment-review-${field.key}`
                   return <div className={`review-field${field.key === 'product' || fieldCandidates.length > 3 ? ' wide' : ''}`} key={field.key}>
-                    <label htmlFor={inputId}>{field.label}</label>
+                    <label htmlFor={inputId}>{field.label}<span className={`review-field-initial${draftDiffersFromInitial(currentRow, field.key, draft[field.key]) ? ' is-changed' : ''}`}>（初期値：{initialValueText(currentRow, field.key)}）</span></label>
                     <input id={inputId} type="text" inputMode={field.inputMode} value={draft[field.key]} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => updateDraftField(field.key, event.target.value)} onBlur={field.key === 'content_value' ? () => setDraft((value) => value ? inferMissingDraftUnit(value) : value) : undefined} />
                     {field.key === 'product' && bulkProductCorrectionRows.length > 1 && <button className="secondary-button compact review-bulk-product-correction" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void applyProductCorrectionToMatchingRows()}>同じ「{currentStoredProduct}」表記の{bulkProductCorrectionRows.length}行を一括修正</button>}
                     {fieldCandidates.length > 0 && <div className="review-field-candidates" aria-label={`${field.label}の修正候補`}><span>候補をクリックして採用</span>{fieldCandidates.map((candidate) => <div className="review-candidate-chip" key={candidate.shipment_field_observation_id}><button type="button" className="review-candidate-value" disabled={isBusy} title={`採用（確度: ${candidate.confidence}）`} onClick={() => void actOnCandidate(candidate, true)}>{valueText(candidate.normalized_value)}を採用</button><button type="button" className="review-candidate-reject" disabled={isBusy} aria-label={`${field.label}候補 ${valueText(candidate.normalized_value)} を却下`} title="候補を却下" onClick={() => void actOnCandidate(candidate, false)}>却下</button></div>)}</div>}
