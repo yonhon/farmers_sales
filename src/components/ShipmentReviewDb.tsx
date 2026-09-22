@@ -846,28 +846,17 @@ export function ShipmentReviewDb() {
                     {field.key === 'unit_price_yen' && openTaxAdjustedPriceIssue && (
                       <div className="review-field-reference" aria-label="販売実績側の税込単価を単価として採用">
                         {taxAdjustedReferenceError ? (
-                          <p className="review-reference-caption">
-                            この行には税調整後一致の警告がありますが、販売実績を取得できませんでした。開き直すか、値を修正するか、行を「登録取下」にしてください。
-                          </p>
+                          <p className="review-reference-caption">販売実績を取得できませんでした。開き直すか、値を修正するか、行を「登録取下」にしてください。</p>
                         ) : !taxAdjustedReference ? (
                           <p className="review-reference-caption">販売実績を確認しています…</p>
                         ) : taxAdjustedReference.matches.length === 0 ? (
                           // The tax_adjusted_price_match_candidate issue is static from bundle import and
-                          // reflects the price at that time. If the price has since been edited to a value
-                          // with no live relationship to any sales record (not even a tax-adjusted one), the
-                          // "採用" wording below would be inaccurate, so this replaces it instead of
-                          // rendering alongside an empty candidate list.
-                          <p className="review-reference-caption">
-                            現在の単価（{draft.unit_price_yen || '現在の値'}円）は、税抜換算でも一致する販売実績が見つかりません。
-                            値を販売実績と完全一致する値へ修正するか、行を「登録取下」にしてください（この警告は「確認して許容」では閉じられません）。
-                          </p>
+                          // reflects the price at that time; a live check can still find no relationship
+                          // (not even a tax-adjusted one) at the row's current price.
+                          <p className="review-reference-caption">販売実績と一致しません。値を修正するか登録取下にしてください。</p>
                         ) : (
                           <>
-                            <p className="review-reference-caption">
-                              単価欄の{draft.unit_price_yen || '現在の値'}円は、下の販売実績（税込価格）と税抜換算でしか一致しません。
-                              <strong>販売実績の税込価格をそのまま単価として採用</strong>すると、単価欄がその金額に置き換わり、この警告は解消されます。
-                              採用しない場合は、販売実績と完全一致する値へ修正するか、行を「登録取下」にしてください（この警告は「確認して許容」では閉じられません）。
-                            </p>
+                            <p className="review-reference-caption">販売実績と一致しませんが、下の販売実績（税込価格）と税抜換算で一致します。値を修正するか登録取下にしてください。</p>
                             <div className="review-field-candidates">
                               {dedupeTaxAdjustedMatches(taxAdjustedReference.matches).map((group) => (
                                 <button
