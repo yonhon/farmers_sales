@@ -920,6 +920,14 @@ tbody tr:last-child td { border-bottom: 0; }
 .review-issues .review-db-list { gap: 6px; margin: 0; padding: 0 8px 8px; }
 .review-issues .review-db-item { gap: 8px; padding: 7px 9px; }
 .review-issue-guidance { margin: 0; padding: 0 10px 7px; color: #795319; font-size: 0.68rem; }
+.review-issue-sales-match-note {
+  flex: 0 0 auto;
+  max-width: 40%;
+  color: #8b342b;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-align: right;
+}
 .review-issue-technical { color: var(--ink-muted); font-size: 0.65rem; }
 .review-issue-technical summary { width: fit-content; cursor: pointer; }
 .review-issue-technical code { margin-right: 7px; color: #59665f; }

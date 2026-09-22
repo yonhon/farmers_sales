@@ -108,6 +108,16 @@ function valueText(value: unknown) {
   return typeof value === 'string' ? value : String(value)
 }
 
+// Kept in sync with public.apply_shipment_review_action (202609230004): these issues can only be
+// closed by a correction (or accepted candidate, or the tax-adjusted adopt-sales-price button) that
+// makes the row's product and price actually match sales data — never by accepting or otherwise
+// closing the mismatch as-is. A row that cannot be made to match is withdrawn (登録取下) instead.
+const SALES_MATCH_REQUIRED_ISSUE_CODES = new Set([
+  'price_not_observed_in_sales_window',
+  'tax_adjusted_price_match_candidate',
+  'possible_product_misread',
+])
+
 function issueTitle(code: string, fieldName: string | null, severity: string) {
   const fieldLabel = fieldDefinitions.find(({ key }) => key === fieldName)?.label
   if (code === 'transcription_review_note') return '転記内容の確認'
@@ -862,7 +872,7 @@ export function ShipmentReviewDb() {
                   </div>
                 })}</div>
 
-                {openIssues.length > 0 && <details className="review-issues" key={currentRow.shipment_review_row_id} open={openErrorCount + openWarningCount > 0}><summary><strong>警告・確認事項</strong><span>{openErrorCount > 0 && `エラー ${openErrorCount}件`}{openErrorCount > 0 && openWarningCount > 0 && '・'}{openWarningCount > 0 && `警告 ${openWarningCount}件`}{(openErrorCount > 0 || openWarningCount > 0) && openInfoCount > 0 && '・'}{openInfoCount > 0 && `情報 ${openInfoCount}件`}</span></summary><p className="review-issue-guidance">エラー・警告は「修正済みとして解決」または「確認して許容」を押すまで残り、承認をブロックします。入力値を保存した後、該当する警告を解決してください。</p><div className="review-db-list">{openIssues.map((issue) => <div className={`review-db-item ${issue.severity}`} key={issue.shipment_review_issue_id}><div><strong>{issueTitle(issue.code, issue.field_name, issue.severity)}</strong><details className="review-issue-technical"><summary>詳細</summary><code>{issue.code}</code><span>{issue.message}</span></details></div><button type="button" className="secondary-button compact" disabled={isBusy} onClick={() => void closeIssue(issue)}>{issue.severity === 'error' ? '修正済みとして解決' : '確認して許容'}</button></div>)}</div></details>}
+                {openIssues.length > 0 && <details className="review-issues" key={currentRow.shipment_review_row_id} open={openErrorCount + openWarningCount > 0}><summary><strong>警告・確認事項</strong><span>{openErrorCount > 0 && `エラー ${openErrorCount}件`}{openErrorCount > 0 && openWarningCount > 0 && '・'}{openWarningCount > 0 && `警告 ${openWarningCount}件`}{(openErrorCount > 0 || openWarningCount > 0) && openInfoCount > 0 && '・'}{openInfoCount > 0 && `情報 ${openInfoCount}件`}</span></summary><p className="review-issue-guidance">エラー・警告は解決するまで承認をブロックします。単価・品目名の販売実績との不一致は、値を修正して一致させるか、行を「登録取下」にすることでのみ解消できます（「確認して許容」では閉じられません）。それ以外は入力値を保存した後、「修正済みとして解決」または「確認して許容」を押してください。</p><div className="review-db-list">{openIssues.map((issue) => <div className={`review-db-item ${issue.severity}`} key={issue.shipment_review_issue_id}><div><strong>{issueTitle(issue.code, issue.field_name, issue.severity)}</strong><details className="review-issue-technical"><summary>詳細</summary><code>{issue.code}</code><span>{issue.message}</span></details></div>{SALES_MATCH_REQUIRED_ISSUE_CODES.has(issue.code) ? <span className="review-issue-sales-match-note">値を修正して販売実績と一致させるか、行を「登録取下」にしてください</span> : <button type="button" className="secondary-button compact" disabled={isBusy} onClick={() => void closeIssue(issue)}>{issue.severity === 'error' ? '修正済みとして解決' : '確認して許容'}</button>}</div>)}</div></details>}
 
                 <details className="review-history"><summary>操作履歴（{currentRow.actions.length}件）</summary>{currentRow.actions.length ? <ol>{currentRow.actions.map((action) => <li key={action.shipment_review_action_id}><time>{new Date(action.acted_at).toLocaleString('ja-JP')}</time> {action.action_type}{action.notes ? ` — ${action.notes}` : ''}</li>)}</ol> : <p>操作履歴はまだありません。</p>}</details>
                 <div className="review-action-dock">
