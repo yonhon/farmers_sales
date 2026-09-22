@@ -554,28 +554,31 @@ export function ShipmentReviewDb() {
     }
   }
 
-  // Writes the sales-side (tax-included) price verbatim into unit_price_yen and resolves the
-  // tax_adjusted_price_match_candidate issue in one step. Writing the raw sales price, rather than a
-  // tax-exclusive figure rounded from it, sidesteps the floor/ceiling rounding question entirely: the
-  // exact-match check that other saves rely on then simply succeeds against the real sales_line.
+  // Writes the sales-side (tax-included) price verbatim into unit_price_yen. Writing the raw sales
+  // price, rather than a tax-exclusive figure rounded from it, sidesteps the floor/ceiling rounding
+  // question entirely: the exact-match check that other saves rely on then simply succeeds against the
+  // real sales_line, and app_private.revalidate_shipment_review_price_issue_after_action (202609230005)
+  // resolves tax_adjusted_price_match_candidate on that same match — there is no separate accept/resolve
+  // step to call here, and public.apply_shipment_review_action now rejects one for this issue anyway.
   async function adoptTaxAdjustedSalesPrice(match: TaxAdjustedSalesMatch) {
     if (!currentRow || !batch || !draft || !openTaxAdjustedPriceIssue) return
+    const issueId = openTaxAdjustedPriceIssue.shipment_review_issue_id
     const nextDraft = { ...draft, unit_price_yen: String(match.sales_unit_price_yen) }
     setDraft(nextDraft)
     setOperation({ kind: 'saving', message: '販売実績の税込単価を出荷単価として保存しています…', retryable: false })
     try {
       await prepareRow(currentRow)
       await persistDraftValues(currentRow, nextDraft, true)
-      await apply({
-        shipment_review_row_id: currentRow.shipment_review_row_id,
-        expected_row_status: 'in_review',
-        action_type: 'accept_issue',
-        issue_id: openTaxAdjustedPriceIssue.shipment_review_issue_id,
-        notes: `販売実績の税込単価${match.sales_unit_price_yen}円（${match.report_date}）をそのまま単価として採用`,
-      })
-      await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id)
-      setOperation({ kind: 'success', message: '単価を販売実績の税込価格に更新し、警告を解消しました。', retryable: false })
+      const detail = await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id)
+      const refreshedRow = detail.rows.find((row) => row.shipment_review_row_id === currentRow.shipment_review_row_id)
+      const stillOpen = refreshedRow?.issues.some((item) => (
+        item.shipment_review_issue_id === issueId && item.issue_status === 'open'
+      ))
+      setOperation(stillOpen
+        ? { kind: 'error', message: '単価は保存しましたが、この販売実績とは一致しませんでした。値をご確認ください。', retryable: false }
+        : { kind: 'success', message: '単価を販売実績の税込価格に更新し、警告を解消しました。', retryable: false })
     } catch (error) {
+      await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id).catch(() => {})
       setOperation(errorState(error))
     }
   }
@@ -845,7 +848,7 @@ export function ShipmentReviewDb() {
                         <p className="review-reference-caption">
                           単価欄の{draft.unit_price_yen || '現在の値'}円は、下の販売実績（税込価格）と税抜換算でしか一致しません。
                           <strong>販売実績の税込価格をそのまま単価として採用</strong>すると、単価欄がその金額に置き換わり、この警告は解消されます。
-                          現在の値のままでよい場合は、採用せず下の警告欄で「確認して許容」を押してください。
+                          採用しない場合は、販売実績と完全一致する値へ修正するか、行を「登録取下」にしてください（この警告は「確認して許容」では閉じられません）。
                         </p>
                         <div className="review-field-candidates">
                           {taxAdjustedReferenceError
