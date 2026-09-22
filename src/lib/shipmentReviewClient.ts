@@ -249,7 +249,12 @@ function apiError(error: BackendError): ShipmentReviewApiError {
     return new ShipmentReviewApiError('別の操作で状態が更新されました。最新状態を再読み込みしてください。', 'conflict', true)
   }
   if (message.includes('SHIPMENT_REVIEW_NOT_READY')) {
-    return new ShipmentReviewApiError('未確認・保留・未処理の警告が残っているため反映できません。', 'not_ready', false)
+    return new ShipmentReviewApiError(
+      '未処理の警告・エラーが残っているため承認できません。下の「警告・確認事項」欄を開き、'
+      + '内容を確認のうえ「確認して許容」または「修正済みとして解決」を押してから、再度承認してください。',
+      'not_ready',
+      false,
+    )
   }
   if (message.includes('SHIPMENT_REVIEW_REFERENCE_NOT_FOUND')) {
     return new ShipmentReviewApiError('参照先の品目・単位・市場が見つかりません。', 'reference_missing', false)

@@ -40,7 +40,7 @@ const statusLabels: Record<ShipmentReviewRowStatus, string> = {
   // "there was no real shipment": e.g. a discounted (おつとめ品) sale the price-match logic can't yet
   // verify is also withdrawn this way, so the batch can still finalize. The row_status value and DB
   // schema are unchanged.
-  no_shipment: '登録取り下げ',
+  no_shipment: '登録取下',
   rejected: '差し戻し',
 }
 
@@ -704,7 +704,7 @@ export function ShipmentReviewDb() {
             <div className="pending"><strong>{counts.unreviewed + counts.in_review}</strong><span>未完了</span></div>
             <div className="approved"><strong>{counts.approved}</strong><span>承認済み</span></div>
             <div className="held"><strong>{counts.deferred}</strong><span>保留</span></div>
-            <div className="excluded"><strong>{counts.no_shipment}</strong><span>登録取り下げ</span></div>
+            <div className="excluded"><strong>{counts.no_shipment}</strong><span>登録取下</span></div>
             <div className="review-progress-note"><p>v{batch.report_version} / {batch.source_month.slice(0, 7)}</p><small>DBを正本として保存</small></div>
           </section>
 
@@ -777,36 +777,44 @@ export function ShipmentReviewDb() {
                 <div className="review-fields">{fieldDefinitions.map((field) => {
                   const fieldCandidates = candidates.filter((candidate) => candidate.field_name === field.key)
                   const inputId = `shipment-review-${field.key}`
-                  return <div className={`review-field${field.key === 'product' || fieldCandidates.length > 3 ? ' wide' : ''}`} key={field.key}>
+                  const isWide = field.key === 'product' || fieldCandidates.length > 3
+                    || (field.key === 'unit_price_yen' && Boolean(openTaxAdjustedPriceIssue))
+                  return <div className={`review-field${isWide ? ' wide' : ''}`} key={field.key}>
                     <label htmlFor={inputId}>{field.label}<span className={`review-field-initial${draftDiffersFromInitial(currentRow, field.key, draft[field.key]) ? ' is-changed' : ''}`}>（初期値：{initialValueText(currentRow, field.key)}）</span></label>
                     <input id={inputId} type="text" inputMode={field.inputMode} value={draft[field.key]} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => updateDraftField(field.key, event.target.value)} onBlur={field.key === 'content_value' ? () => setDraft((value) => value ? inferMissingDraftUnit(value) : value) : undefined} />
                     {field.key === 'product' && bulkProductCorrectionRows.length > 1 && <button className="secondary-button compact review-bulk-product-correction" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void applyProductCorrectionToMatchingRows()}>同じ「{currentStoredProduct}」表記の{bulkProductCorrectionRows.length}行を一括修正</button>}
                     {fieldCandidates.length > 0 && <div className="review-field-candidates" aria-label={`${field.label}の修正候補`}><span>候補をクリックして採用</span>{fieldCandidates.map((candidate) => <div className="review-candidate-chip" key={candidate.shipment_field_observation_id}><button type="button" className="review-candidate-value" disabled={isBusy} title={`採用（確度: ${candidate.confidence}）`} onClick={() => void actOnCandidate(candidate, true)}>{valueText(candidate.normalized_value)}を採用</button><button type="button" className="review-candidate-reject" disabled={isBusy} aria-label={`${field.label}候補 ${valueText(candidate.normalized_value)} を却下`} title="候補を却下" onClick={() => void actOnCandidate(candidate, false)}>却下</button></div>)}</div>}
                     {field.key === 'unit_price_yen' && openTaxAdjustedPriceIssue && (
-                      <div className="review-field-candidates review-field-reference" aria-label="販売実績側の税調整後価格">
-                        <span>販売実績（税込・参考）</span>
-                        {taxAdjustedReferenceError
-                          ? <span className="review-reference-empty">参考価格を取得できませんでした</span>
-                          : !taxAdjustedReference
-                          ? <span className="review-reference-loading">読み込み中…</span>
-                          : taxAdjustedReference.matches.length === 0
-                            ? <span className="review-reference-empty">一致する販売実績が見つかりません</span>
-                            : taxAdjustedReference.matches.map((match) => (
-                                <div className="review-reference-chip" key={`${match.report_date}:${match.sales_unit_price_yen}`}>
-                                  {match.sales_unit_price_yen}円（税抜換算{Math.round(match.sales_unit_price_yen / 1.08)}円・{match.report_date}・{match.sold_quantity}点）
-                                </div>
-                              ))}
+                      <div className="review-field-reference" aria-label="販売実績側の税調整後価格（参考情報）">
+                        <p className="review-reference-caption">
+                          参考情報：単価欄の{draft.unit_price_yen || '現在の値'}円は、下の販売実績（税込価格）と税抜換算で一致すると判定されています。
+                          <strong>この税込価格を単価欄に転記しないでください。</strong>
+                          問題なければ下の警告欄で「確認して許容」を押してください。
+                        </p>
+                        <div className="review-field-candidates">
+                          {taxAdjustedReferenceError
+                            ? <span className="review-reference-empty">参考価格を取得できませんでした</span>
+                            : !taxAdjustedReference
+                            ? <span className="review-reference-loading">読み込み中…</span>
+                            : taxAdjustedReference.matches.length === 0
+                              ? <span className="review-reference-empty">一致する販売実績が見つかりません</span>
+                              : taxAdjustedReference.matches.map((match) => (
+                                  <div className="review-reference-chip" key={`${match.report_date}:${match.sales_unit_price_yen}`}>
+                                    販売実績（税込）{match.sales_unit_price_yen}円・{match.report_date}・{match.sold_quantity}点
+                                  </div>
+                                ))}
+                        </div>
                       </div>
                     )}
                   </div>
                 })}</div>
 
-                {openIssues.length > 0 && <details className="review-issues" key={currentRow.shipment_review_row_id} open={openErrorCount > 0}><summary><strong>警告・確認事項</strong><span>{openErrorCount > 0 && `エラー ${openErrorCount}件`}{openErrorCount > 0 && openWarningCount > 0 && '・'}{openWarningCount > 0 && `警告 ${openWarningCount}件`}{(openErrorCount > 0 || openWarningCount > 0) && openInfoCount > 0 && '・'}{openInfoCount > 0 && `情報 ${openInfoCount}件`}</span></summary><p className="review-issue-guidance">入力値を保存した後、該当する警告を解決してください。</p><div className="review-db-list">{openIssues.map((issue) => <div className={`review-db-item ${issue.severity}`} key={issue.shipment_review_issue_id}><div><strong>{issueTitle(issue.code, issue.field_name, issue.severity)}</strong><details className="review-issue-technical"><summary>詳細</summary><code>{issue.code}</code><span>{issue.message}</span></details></div><button type="button" className="secondary-button compact" disabled={isBusy} onClick={() => void closeIssue(issue)}>{issue.severity === 'error' ? '修正済みとして解決' : '確認して許容'}</button></div>)}</div></details>}
+                {openIssues.length > 0 && <details className="review-issues" key={currentRow.shipment_review_row_id} open={openErrorCount + openWarningCount > 0}><summary><strong>警告・確認事項</strong><span>{openErrorCount > 0 && `エラー ${openErrorCount}件`}{openErrorCount > 0 && openWarningCount > 0 && '・'}{openWarningCount > 0 && `警告 ${openWarningCount}件`}{(openErrorCount > 0 || openWarningCount > 0) && openInfoCount > 0 && '・'}{openInfoCount > 0 && `情報 ${openInfoCount}件`}</span></summary><p className="review-issue-guidance">エラー・警告は「修正済みとして解決」または「確認して許容」を押すまで残り、承認をブロックします。入力値を保存した後、該当する警告を解決してください。</p><div className="review-db-list">{openIssues.map((issue) => <div className={`review-db-item ${issue.severity}`} key={issue.shipment_review_issue_id}><div><strong>{issueTitle(issue.code, issue.field_name, issue.severity)}</strong><details className="review-issue-technical"><summary>詳細</summary><code>{issue.code}</code><span>{issue.message}</span></details></div><button type="button" className="secondary-button compact" disabled={isBusy} onClick={() => void closeIssue(issue)}>{issue.severity === 'error' ? '修正済みとして解決' : '確認して許容'}</button></div>)}</div></details>}
 
                 <details className="review-history"><summary>操作履歴（{currentRow.actions.length}件）</summary>{currentRow.actions.length ? <ol>{currentRow.actions.map((action) => <li key={action.shipment_review_action_id}><time>{new Date(action.acted_at).toLocaleString('ja-JP')}</time> {action.action_type}{action.notes ? ` — ${action.notes}` : ''}</li>)}</ol> : <p>操作履歴はまだありません。</p>}</details>
                 <div className="review-action-dock">
-                  <label className="review-decision-reason">判断理由・コメント<input type="text" value={decisionReason} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDecisionReason(event.target.value)} placeholder="保留・登録取り下げ・差し戻しでは必須" /></label>
-                  <div className="review-action-buttons"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>入力を保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>承認</button><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>登録取り下げ</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻し</button></div>
+                  <label className="review-decision-reason">判断理由・コメント<input type="text" value={decisionReason} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDecisionReason(event.target.value)} placeholder="保留・登録取下・差し戻しでは必須" /></label>
+                  <div className="review-action-buttons"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>入力を保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>承認</button><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>登録取下</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻し</button></div>
                 </div>
               </div>
             </section>
