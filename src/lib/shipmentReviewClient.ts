@@ -1,3 +1,4 @@
+import type { MarkdownSalesReference } from './shipmentMarkdown'
 import { supabase } from './supabase'
 
 export type ShipmentReviewRowStatus =
@@ -14,6 +15,8 @@ export type ShipmentReviewField =
   | 'content_unit'
   | 'unit_price_yen'
   | 'shipment_package_quantity'
+  // ADR007: optional sticker price; unit_price_yen then holds the list price.
+  | 'markdown_unit_price_yen'
 
 export type ShipmentReviewObservation = {
   shipment_field_observation_id: string
@@ -130,6 +133,10 @@ export type ShipmentReviewDbRow = {
   import_batch_id: string
   source_page: string
   source_row: number
+  // ADR007: 0 for the ledger row as transcribed, 1, 2, ... for parts split from it.
+  source_part?: number
+  split_from_review_row_id?: string | null
+  split_total?: number | null
   row_status: ShipmentReviewRowStatus
   shipment_date: string
   market_code: string
@@ -296,6 +303,7 @@ export type ShipmentReviewAction = {
     | 'reject_row'
     | 'return_to_review'
     | 'comment'
+    | 'split_row'
   observation_id?: string
   issue_id?: string
   field_name?: ShipmentReviewField
@@ -304,6 +312,8 @@ export type ShipmentReviewAction = {
   confidence?: string
   evidence?: Record<string, unknown>
   notes?: string
+  // split_row: the number of units moved to the new part.
+  quantity?: number
 }
 
 export type ShipmentReviewErrorKind =
@@ -389,6 +399,20 @@ function apiError(error: BackendError): ShipmentReviewApiError {
       false,
     )
   }
+  if (message.includes('must add up to the quantity before the split')) {
+    return new ShipmentReviewApiError(
+      '分割した行の数量の合計が、分割前の数量と一致しません。各行の数量を見直してください（登録取下にした行も合計に含まれます）。',
+      'not_ready',
+      false,
+    )
+  }
+  if (message.includes('an approved markdown row has no discount slot left')) {
+    return new ShipmentReviewApiError(
+      '値引枠を確保できない値引分の行が承認されています。その行を確認し直し、登録取下にしてください。',
+      'not_ready',
+      false,
+    )
+  }
   if (message.includes('SHIPMENT_REVIEW_NOT_READY')) {
     return new ShipmentReviewApiError(
       '未処理の警告・エラーが残っているため承認できません。下の「警告・確認事項」欄を開き、'
@@ -404,6 +428,13 @@ function apiError(error: BackendError): ShipmentReviewApiError {
     || message.includes('a reason is required to re-approve a carried-over row')) {
     return new ShipmentReviewApiError(
       '前版から引き継いだ行（本番の明細）を変更するには、判断理由を入力してください。',
+      'invalid',
+      false,
+    )
+  }
+  if (message.includes('the split quantity must be a whole number')) {
+    return new ShipmentReviewApiError(
+      '分割する個数は、1以上で行の数量より少ない整数で入力してください。',
       'invalid',
       false,
     )
@@ -491,6 +522,16 @@ export function createShipmentReviewApi(client: ShipmentReviewBackend) {
           p_notes: notes?.trim() || null,
         }),
         '差分の承認',
+      )
+    },
+
+    // ADR007: discounted sales whose per-unit discounted price equals the row's sticker price.
+    async markdownSalesReference(shipmentReviewRowId: string) {
+      return requireObject<MarkdownSalesReference>(
+        await rpc('shipment_review_markdown_sales_reference', {
+          p_shipment_review_row_id: shipmentReviewRowId,
+        }),
+        '値引販売の実績',
       )
     },
 

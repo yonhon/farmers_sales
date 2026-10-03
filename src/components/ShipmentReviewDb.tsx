@@ -31,6 +31,12 @@ import {
   formatCorrectionSource,
   formatCorrectionValue,
 } from '../lib/shipmentCorrection'
+import {
+  groupMarkdownMatches,
+  markdownLabel,
+  splitPartPosition,
+} from '../lib/shipmentMarkdown'
+import type { MarkdownSalesReference } from '../lib/shipmentMarkdown'
 import { completeShipmentContentUnit, sourcePageNumber } from '../lib/shipmentReview'
 import { shipmentReviewPhysicalRow } from '../lib/shipmentReviewImageRows'
 import { mergeSourceImageUrls } from '../lib/shipmentReviewImages'
@@ -58,12 +64,15 @@ const fieldDefinitions: Array<{
   key: ShipmentReviewField
   label: string
   inputMode?: 'numeric' | 'text'
+  // Optional fields are not part of the five required review values (ADR007 sticker price).
+  optional?: boolean
 }> = [
   { key: 'product', label: '品目名' },
   { key: 'content_value', label: '内容量', inputMode: 'numeric' },
   { key: 'content_unit', label: '単位' },
   { key: 'unit_price_yen', label: '単価（円）', inputMode: 'numeric' },
   { key: 'shipment_package_quantity', label: '数量', inputMode: 'numeric' },
+  { key: 'markdown_unit_price_yen', label: 'シール価格（値引分のみ）', inputMode: 'numeric', optional: true },
 ]
 
 type Draft = Record<ShipmentReviewField, string>
@@ -77,6 +86,7 @@ function compareRows(left: ShipmentReviewDbRow, right: ShipmentReviewDbRow) {
   return (sourcePageNumber(left.source_page) ?? Number.MAX_SAFE_INTEGER)
     - (sourcePageNumber(right.source_page) ?? Number.MAX_SAFE_INTEGER)
     || left.source_row - right.source_row
+    || (left.source_part ?? 0) - (right.source_part ?? 0)
     || left.shipment_review_row_id.localeCompare(right.shipment_review_row_id)
 }
 
@@ -117,7 +127,7 @@ function valueText(value: unknown) {
   return typeof value === 'string' ? value : String(value)
 }
 
-// Kept in sync with public.apply_shipment_review_action (202609230004): these issues can only be
+// Kept in sync with public.apply_shipment_review_action (202610030004): these issues can only be
 // closed by a correction (or accepted candidate, or the tax-adjusted adopt-sales-price button) that
 // makes the row's product and price actually match sales data — never by accepting or otherwise
 // closing the mismatch as-is. A row that cannot be made to match is withdrawn (登録取下) instead.
@@ -125,11 +135,23 @@ const SALES_MATCH_REQUIRED_ISSUE_CODES = new Set([
   'price_not_observed_in_sales_window',
   'tax_adjusted_price_match_candidate',
   'possible_product_misread',
+  // ADR007: a sticker price that matches a discounted sale, and a sticker row left without a slot.
+  'markdown_price_match_candidate',
+  'markdown_discount_slot_unavailable',
+])
+
+// Price issues for which a markdown sticker may explain the ledger price (ADR007).
+const MARKDOWN_REFERENCE_ISSUE_CODES = new Set([
+  'price_not_observed_in_sales_window',
+  'markdown_price_match_candidate',
+  'markdown_discount_slot_unavailable',
 ])
 
 function issueTitle(code: string, fieldName: string | null, severity: string) {
   const fieldLabel = fieldDefinitions.find(({ key }) => key === fieldName)?.label
   if (code === 'transcription_review_note') return '転記内容の確認'
+  if (code === 'markdown_price_match_candidate') return '値引シールの価格の可能性'
+  if (code === 'markdown_discount_slot_unavailable') return '対応する値引販売の枠が残っていません'
   if (code.startsWith('missing_')) return `${fieldLabel ?? '必須項目'}が未入力`
   if (severity === 'error') return `${fieldLabel ?? '入力内容'}の修正が必要`
   if (severity === 'warning') return `${fieldLabel ?? '入力内容'}の確認が必要`
@@ -175,7 +197,8 @@ function draftDiffersFromInitial(row: ShipmentReviewDbRow, field: ShipmentReview
 function normalizedValue(field: ShipmentReviewField, value: string): unknown {
   const trimmed = value.trim()
   if (!trimmed) return null
-  if (field === 'content_value' || field === 'unit_price_yen' || field === 'shipment_package_quantity') {
+  if (field === 'content_value' || field === 'unit_price_yen' || field === 'shipment_package_quantity'
+    || field === 'markdown_unit_price_yen') {
     const number = Number(trimmed)
     if (!Number.isFinite(number)) throw new Error('数値項目には有効な数値を入力してください。')
     return number
@@ -188,7 +211,8 @@ function normalizedValuesEqual(field: ShipmentReviewField, stored: unknown, draf
   if (stored === null || stored === undefined || next === null) {
     return (stored === null || stored === undefined) && next === null
   }
-  if (field === 'content_value' || field === 'unit_price_yen' || field === 'shipment_package_quantity') {
+  if (field === 'content_value' || field === 'unit_price_yen' || field === 'shipment_package_quantity'
+    || field === 'markdown_unit_price_yen') {
     return Number(stored) === next
   }
   return String(stored).trim() === next
@@ -272,6 +296,8 @@ export function ShipmentReviewDb() {
   const [taxAdjustedReferenceError, setTaxAdjustedReferenceError] = useState(false)
   const [correctionDiff, setCorrectionDiff] = useState<ShipmentCorrectionDiffResult | null>(null)
   const [correctionDiffError, setCorrectionDiffError] = useState(false)
+  const [markdownReference, setMarkdownReference] = useState<MarkdownSalesReference | null>(null)
+  const [markdownReferenceError, setMarkdownReferenceError] = useState(false)
   const imageScrollRef = useRef<HTMLDivElement>(null)
   const sourceImageRef = useRef<HTMLImageElement>(null)
   const rowRailRef = useRef<HTMLDivElement>(null)
@@ -360,6 +386,16 @@ export function ShipmentReviewDb() {
   const openErrorCount = openIssues.filter((issue) => issue.severity === 'error').length
   const openWarningCount = openIssues.filter((issue) => issue.severity === 'warning').length
   const openInfoCount = openIssues.filter((issue) => issue.severity === 'info').length
+  const currentMarkdownPrice = currentRow
+    ? valueText(displayedObservation(currentRow, 'markdown_unit_price_yen')?.normalized_value).trim()
+    : ''
+  const currentListPrice = currentRow
+    ? valueText(displayedObservation(currentRow, 'unit_price_yen')?.normalized_value).trim()
+    : ''
+  const currentMarkdownLabel = currentMarkdownPrice ? markdownLabel(currentListPrice, currentMarkdownPrice) : null
+  const currentSplitPosition = currentRow ? splitPartPosition(currentRow, rows) : null
+  const markdownReferenceIssue = openIssues.find((issue) => MARKDOWN_REFERENCE_ISSUE_CODES.has(issue.code)) ?? null
+  const showMarkdownReference = Boolean(markdownReferenceIssue || currentMarkdownPrice)
   const openTaxAdjustedPriceIssue = openIssues.find((issue) => (
     issue.code === 'tax_adjusted_price_match_candidate' && issue.field_name === 'unit_price_yen'
   )) ?? null
@@ -404,6 +440,18 @@ export function ShipmentReviewDb() {
       .catch(() => { if (active) setTaxAdjustedReferenceError(true) })
     return () => { active = false }
   }, [openTaxAdjustedPriceIssue?.shipment_review_issue_id, currentRow])
+
+  // Discounted sales a sticker price may correspond to, fetched like the tax-adjusted reference.
+  useEffect(() => {
+    setMarkdownReference(null)
+    setMarkdownReferenceError(false)
+    if (!showMarkdownReference || !currentRow) return
+    let active = true
+    getShipmentReviewApi().markdownSalesReference(currentRow.shipment_review_row_id)
+      .then((reference) => { if (active) setMarkdownReference(reference) })
+      .catch(() => { if (active) setMarkdownReferenceError(true) })
+    return () => { active = false }
+  }, [showMarkdownReference, currentRow])
 
   // The diff is recomputed by the database from the current rows, so it is reloaded whenever the batch
   // detail is refreshed after an action.
@@ -548,6 +596,8 @@ export function ShipmentReviewDb() {
       const nextValue = normalizedValue(key, value[key])
       if (previous?.review_status === 'accepted'
         && normalizedValuesEqual(key, previous.normalized_value, value[key])) continue
+      if (key === 'markdown_unit_price_yen' && nextValue === null
+        && (previous?.normalized_value === null || previous?.normalized_value === undefined)) continue
       await apply({
         shipment_review_row_id: row.shipment_review_row_id,
         expected_row_status: 'in_review',
@@ -626,6 +676,72 @@ export function ShipmentReviewDb() {
         : { kind: 'success', message: '単価を販売実績の税込価格に更新し、警告を解消しました。', retryable: false })
     } catch (error) {
       await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id).catch(() => {})
+      setOperation(errorState(error))
+    }
+  }
+
+  // ADR007: the ledger shows the sticker price; POS sold at the list price with a discount. Adopting
+  // stores the sale's list price as unit_price_yen and the sticker price as markdown_unit_price_yen.
+  // The database then checks the list price by exact match and claims one discount slot.
+  async function adoptMarkdownPrices(listPrice: number) {
+    if (!currentRow || !batch || !draft || !markdownReference?.sticker_price_yen) return
+    if (carriedRowReasonMissing(currentRow)) return
+    const nextDraft = {
+      ...draft,
+      unit_price_yen: String(listPrice),
+      markdown_unit_price_yen: String(markdownReference.sticker_price_yen),
+    }
+    setDraft(nextDraft)
+    setOperation({ kind: 'saving', message: '定価とシール価格を保存しています…', retryable: false })
+    try {
+      await prepareRow(currentRow)
+      await persistDraftValues(currentRow, inferMissingDraftUnit(nextDraft), true)
+      const detail = await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id)
+      const refreshedRow = detail.rows.find((row) => row.shipment_review_row_id === currentRow.shipment_review_row_id)
+      const stillOpen = refreshedRow?.issues.some((item) => (
+        item.issue_status === 'open' && SALES_MATCH_REQUIRED_ISSUE_CODES.has(item.code)
+      ))
+      setOperation(stillOpen
+        ? { kind: 'error', message: '定価とシール価格を保存しましたが、販売実績と一致しないか、値引枠が残っていません。値を確認するか登録取下にしてください。', retryable: false }
+        : { kind: 'success', message: '定価とシール価格を保存し、値引販売の枠を確保しました。', retryable: false })
+    } catch (error) {
+      await refreshBatch(batch.import_batch_id, currentRow.shipment_review_row_id).catch(() => {})
+      setOperation(errorState(error))
+    }
+  }
+
+  async function splitCurrentRow() {
+    if (!currentRow || !batch || !draft) return
+    const total = Number(valueText(displayedObservation(currentRow, 'shipment_package_quantity')?.normalized_value))
+    if (!Number.isInteger(total) || total < 2) {
+      setOperation({ kind: 'error', message: '数量が2以上の行だけ分割できます。', retryable: false })
+      return
+    }
+    const answer = window.prompt(`新しい行へ移す個数を入力してください（1〜${total - 1}）。\n値引シールを貼った分を移し、移した行にシール価格を入力します。`, '1')
+    if (answer === null) return
+    const quantity = Number(answer.trim())
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity >= total) {
+      setOperation({ kind: 'error', message: `移す個数は1〜${total - 1}の整数で入力してください。`, retryable: false })
+      return
+    }
+    if (carriedRowReasonMissing(currentRow)) return
+    setOperation({ kind: 'saving', message: '行を分割しています…', retryable: false })
+    try {
+      await prepareRow(currentRow)
+      const result = await apply({
+        shipment_review_row_id: currentRow.shipment_review_row_id,
+        expected_row_status: 'in_review',
+        action_type: 'split_row',
+        quantity,
+        notes: decisionReason.trim() || `${quantity}個を値引分として分割`,
+      }) as { split_row_id?: string }
+      await refreshBatch(batch.import_batch_id, result.split_row_id ?? currentRow.shipment_review_row_id)
+      setOperation({
+        kind: 'success',
+        message: `${quantity}個を新しい行に分けました。値引分の行に「シール価格」を入力するか、値引販売の候補から採用してください。`,
+        retryable: false,
+      })
+    } catch (error) {
       setOperation(errorState(error))
     }
   }
@@ -889,14 +1005,14 @@ export function ShipmentReviewDb() {
                     <div className="source-row-rail-list" ref={rowRailRef}>
                       {pageRows.map(({ row, index }) => (
                         <button
-                          className={`${index === currentIndex ? 'is-current' : ''} ${row.row_status}${isCarriedOverShipmentReviewRow(row) ? ' carried' : ''}`}
+                          className={`${index === currentIndex ? 'is-current' : ''} ${row.row_status}${isCarriedOverShipmentReviewRow(row) ? ' carried' : ''}${valueText(displayedObservation(row, 'markdown_unit_price_yen')?.normalized_value) ? ' markdown' : ''}`}
                           type="button"
                           key={row.shipment_review_row_id}
                           aria-current={index === currentIndex ? 'true' : undefined}
                           title={`${row.source_row}行目・${statusLabels[row.row_status]}${isCarriedOverShipmentReviewRow(row) ? '・前版から引継ぎ' : ''}`}
                           onClick={() => setCurrentIndex(index)}
                         >
-                          {row.source_row}
+                          {row.source_row}{splitPartPosition(row, rows) && <small className="source-row-part">{splitPartPosition(row, rows)}</small>}
                           {row.issues.some((issue) => issue.issue_status === 'open' && issue.severity !== 'info') && <span aria-label="警告あり">!</span>}
                         </button>
                       ))}
@@ -912,9 +1028,11 @@ export function ShipmentReviewDb() {
 
             <section className="panel review-editor-panel">
               <header className="review-editor-header">
-                <div className="review-row-heading"><div><p className="section-kicker">ROW {currentRow.source_row}</p><h2>{draft.product || '品目名未入力'}</h2></div>
+                <div className="review-row-heading"><div><p className="section-kicker">ROW {currentRow.source_row}{currentSplitPosition ? `（分割 ${currentSplitPosition}）` : ''}</p><h2>{draft.product || '品目名未入力'}</h2></div>
                   <span className={`review-status ${currentRow.row_status}`}>{statusLabels[currentRow.row_status]}</span>
                 </div>
+                {currentMarkdownLabel ? <p className="review-origin-badge markdown">{currentMarkdownLabel}{currentSplitPosition ? `・同じ帳票行の${currentSplitPosition}` : ''}</p>
+                  : currentSplitPosition ? <p className="review-origin-badge plain">通常分・同じ帳票行の{currentSplitPosition}</p> : null}
                 {currentRowIsCarried && <p className="review-origin-badge carried">前版から引継ぎ：本番に取り込み済みの明細を写した行です。変更・取下には判断理由が必要です。</p>}
                 {currentRow.carried_from_review_row_id && <p className="review-origin-badge rereview">以前のバッチで取下・保留した行の再確認です。</p>}
                 <div className="review-row-toolbar">
@@ -931,7 +1049,7 @@ export function ShipmentReviewDb() {
                   const fieldCandidates = candidates.filter((candidate) => candidate.field_name === field.key)
                   const inputId = `shipment-review-${field.key}`
                   const isWide = field.key === 'product' || fieldCandidates.length > 3
-                    || (field.key === 'unit_price_yen' && Boolean(openTaxAdjustedPriceIssue))
+                    || (field.key === 'unit_price_yen' && (Boolean(openTaxAdjustedPriceIssue) || showMarkdownReference))
                   return <div className={`review-field${isWide ? ' wide' : ''}`} key={field.key}>
                     <label htmlFor={inputId}>{field.label}<span className={`review-field-initial${draftDiffersFromInitial(currentRow, field.key, draft[field.key]) ? ' is-changed' : ''}`}>（初期値：{initialValueText(currentRow, field.key)}）</span></label>
                     <input id={inputId} type="text" inputMode={field.inputMode} value={draft[field.key]} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => updateDraftField(field.key, event.target.value)} onBlur={field.key === 'content_value' ? () => setDraft((value) => value ? inferMissingDraftUnit(value) : value) : undefined} />
@@ -969,6 +1087,48 @@ export function ShipmentReviewDb() {
                         )}
                       </div>
                     )}
+                    {field.key === 'unit_price_yen' && showMarkdownReference && (
+                      <div className="review-field-reference markdown" aria-label="値引シールの価格と値引販売">
+                        {markdownReferenceError ? (
+                          <p className="review-reference-caption">値引販売の実績を取得できませんでした。開き直してください。</p>
+                        ) : !markdownReference ? (
+                          <p className="review-reference-caption">値引販売の実績を確認しています…</p>
+                        ) : (
+                          <>
+                            {markdownReference.markdown_unit_price_yen !== null && (
+                              <p className="review-reference-caption">
+                                {markdownReference.slot_secured
+                                  ? '値引販売の枠を確保しています。'
+                                  : <strong>対応する値引販売の枠が残っていません。値を見直すか、行を「登録取下」にしてください。</strong>}
+                              </p>
+                            )}
+                            {markdownReference.matches.length > 0 && markdownReference.markdown_unit_price_yen === null && (
+                              <>
+                                <p className="review-reference-caption">帳票の{markdownReference.sticker_price_yen}円は、下の値引販売の値引後価格と一致します。値引シールを貼った出荷なら、定価とシール価格として採用してください。</p>
+                                <div className="review-field-candidates">
+                                  {groupMarkdownMatches(markdownReference.matches).map((group) => (
+                                    <button
+                                      type="button"
+                                      className="review-reference-chip review-reference-adopt"
+                                      key={group.listPrice}
+                                      disabled={isBusy}
+                                      title={`採用すると単価欄が${group.listPrice}円、シール価格欄が${markdownReference.sticker_price_yen}円になります`}
+                                      onClick={() => void adoptMarkdownPrices(group.listPrice)}
+                                    >
+                                      定価{group.listPrice}円・シール{markdownReference.sticker_price_yen}円（{group.rate}%引）として採用（{group.dates.join('・')}・値引{group.discountedUnits}個）
+                                    </button>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            {markdownReference.matches.length === 0 && markdownReference.markdown_unit_price_yen === null
+                              && markdownReferenceIssue?.code === 'markdown_price_match_candidate' && (
+                              <p className="review-reference-caption">今の単価に対応する値引販売は見つかりません。値を修正するか登録取下にしてください。</p>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 })}</div>
 
@@ -977,7 +1137,7 @@ export function ShipmentReviewDb() {
                 <details className="review-history"><summary>操作履歴（{currentRow.actions.length}件）</summary>{currentRow.actions.length ? <ol>{currentRow.actions.map((action) => <li key={action.shipment_review_action_id}><time>{new Date(action.acted_at).toLocaleString('ja-JP')}</time> {action.action_type}{action.notes ? ` — ${action.notes}` : ''}</li>)}</ol> : <p>操作履歴はまだありません。</p>}</details>
                 <div className="review-action-dock">
                   <label className="review-decision-reason">判断理由・コメント<input type="text" value={decisionReason} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDecisionReason(event.target.value)} placeholder={currentRowIsCarried ? '引継ぎ行の変更・承認し直し・取下では必須' : '保留・登録取下・差し戻しでは必須'} /></label>
-                  <div className="review-action-buttons"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>入力を保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>承認</button><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>登録取下</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻し</button></div>
+                  <div className="review-action-buttons"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>入力を保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>承認</button><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>登録取下</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻し</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} title="1行に通常品と値引シール品が混在する場合に、値引分を別の行へ分けます" onClick={() => void splitCurrentRow()}>行を分割</button></div>
                 </div>
               </div>
             </section>

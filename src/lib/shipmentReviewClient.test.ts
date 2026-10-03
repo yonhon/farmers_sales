@@ -231,6 +231,26 @@ describe('shipment review API client', () => {
     }
   })
 
+  it('fetches the markdown sales reference for a row', async () => {
+    const reference = { shipment_unit_price_yen: 108, markdown_unit_price_yen: null, sticker_price_yen: 108, matches: [], slot_secured: null }
+    const { client, rpc } = backend({ rpc: reference })
+    await expect(createShipmentReviewApi(client).markdownSalesReference('row-1')).resolves.toEqual(reference)
+    expect(rpc).toHaveBeenCalledWith('shipment_review_markdown_sales_reference', { p_shipment_review_row_id: 'row-1' })
+  })
+
+  it('explains split and discount-slot failures', async () => {
+    for (const [message, expected, kind] of [
+      ['SHIPMENT_REVIEW_INVALID_PAYLOAD: the split quantity must be a whole number from 1 to the row quantity minus 1.', '分割する個数', 'invalid'],
+      ['SHIPMENT_REVIEW_NOT_READY: the quantities of a split ledger row must add up to the quantity before the split.', '分割した行の数量の合計', 'not_ready'],
+      ['SHIPMENT_REVIEW_NOT_READY: an approved markdown row has no discount slot left.', '値引枠を確保できない', 'not_ready'],
+    ] as const) {
+      const mock = backend({ rpcError: { message } })
+      const error = await createShipmentReviewApi(mock.client).listBatches().catch((caught) => caught)
+      expect(error).toMatchObject({ kind })
+      expect(error.message).toContain(expected)
+    }
+  })
+
   it('identifies carried-over rows by their production line', () => {
     expect(isCarriedOverShipmentReviewRow({ carried_from_shipment_line_id: 'line-1' })).toBe(true)
     expect(isCarriedOverShipmentReviewRow({ carried_from_shipment_line_id: null })).toBe(false)
