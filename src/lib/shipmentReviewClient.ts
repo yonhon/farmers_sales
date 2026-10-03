@@ -138,15 +138,29 @@ export type ShipmentReviewDbRow = {
   review_note: string | null
   comment: string | null
   linked_shipment_line_id: string | null
+  // Correction batches (ADR008): the production line a carried-over row was copied from, or the
+  // earlier withdrawn/deferred review row a target row re-reviews.
+  carried_from_shipment_line_id?: string | null
+  carried_from_review_row_id?: string | null
   observations: ShipmentReviewObservation[]
   issues: ShipmentReviewIssue[]
   actions: ShipmentReviewActionRecord[]
+}
+
+export type ShipmentReviewBatchKind = 'initial' | 'correction'
+
+export type ShipmentCorrectionTarget = {
+  market_code: string
+  shipment_date: string
 }
 
 export type ShipmentReviewBatchSummary = {
   import_batch_id: string
   source_month: string
   report_version: number
+  batch_kind?: ShipmentReviewBatchKind
+  correction_targets?: ShipmentCorrectionTarget[] | null
+  correction_reason?: string | null
   source_filename: string
   row_count: number
   pending_count: number
@@ -161,12 +175,101 @@ export type ShipmentReviewBatch = {
   bundle_schema_version: number
   source_month: string
   report_version: number
+  batch_kind?: ShipmentReviewBatchKind
+  correction_targets?: ShipmentCorrectionTarget[] | null
+  correction_reason?: string | null
   validator_version: string
   lookahead_days: number
   reference_snapshot_id: string | null
   finalized_at: string | null
   finalization_result: Record<string, unknown> | null
   rows: ShipmentReviewDbRow[]
+}
+
+// A carried-over row is a copy of a line already in production. Changing it (returning it to review,
+// re-approving it, or withdrawing it) requires a reason (public.apply_shipment_review_action, ADR008).
+export function isCarriedOverShipmentReviewRow(
+  row: Pick<ShipmentReviewDbRow, 'carried_from_shipment_line_id'>,
+) {
+  return Boolean(row.carried_from_shipment_line_id)
+}
+
+export type ShipmentCorrectionLine = {
+  canonical_product_name: string | null
+  raw_product_name?: string | null
+  raw_content?: string | null
+  content_value: number | null
+  content_value_min?: number | null
+  content_value_max?: number | null
+  weight_calculation_content_value?: number | null
+  content_unit_code: string | null
+  package_unit_code?: string | null
+  unit_price_yen: number | null
+  shipment_package_quantity: number
+  source_page: string | null
+  source_row: number | null
+  review_required?: boolean | null
+  notes?: string | null
+  size_label?: string | null
+}
+
+export type ShipmentCorrectionTotals = {
+  line_count: number
+  package_quantity: number
+  amount_yen: number
+}
+
+export type ShipmentCorrectionDay = {
+  market_code: string
+  shipment_date: string
+  active_report_version: number | null
+  before: ShipmentCorrectionTotals
+  after: ShipmentCorrectionTotals
+  added: Array<ShipmentCorrectionLine & { shipment_review_row_id: string }>
+  removed: Array<ShipmentCorrectionLine & {
+    shipment_line_id: string
+    shipment_review_row_id: string | null
+    row_status: ShipmentReviewRowStatus | null
+    reason: string | null
+  }>
+  changed: Array<{
+    shipment_line_id: string
+    shipment_review_row_id: string
+    changed_fields: string[] | null
+    before: ShipmentCorrectionLine
+    after: ShipmentCorrectionLine
+  }>
+  unchanged_count: number
+}
+
+export type ShipmentCorrectionDiff = {
+  import_batch_id: string
+  report_version: number
+  undecided_row_count: number
+  target_days_without_expected_version: number
+  target_days_without_lines: number
+  days: ShipmentCorrectionDay[]
+  excluded_target_rows: Array<{
+    shipment_review_row_id: string
+    source_page: string
+    source_row: number
+    shipment_date: string
+    row_status: ShipmentReviewRowStatus
+    carried_from_review_row_id: string | null
+    reason: string | null
+  }>
+}
+
+export type ShipmentCorrectionDiffResult = {
+  diff: ShipmentCorrectionDiff
+  diff_sha256: string
+  latest_approval: {
+    diff_sha256: string
+    approved_by: string
+    approved_at: string
+    notes: string | null
+    is_current: boolean
+  } | null
 }
 
 export function canFinalizeShipmentReview(
@@ -245,8 +348,46 @@ function apiError(error: BackendError): ShipmentReviewApiError {
   if (message.includes('SHIPMENT_REVIEW_FEATURE_DISABLED')) {
     return new ShipmentReviewApiError('出荷入力機能は現在無効です。', 'feature_disabled', false)
   }
+  if (message.includes('the diff changed after it was displayed')) {
+    return new ShipmentReviewApiError(
+      '表示した後に差分が変わりました。最新状態を再読み込みし、差分を確認し直してから承認してください。',
+      'conflict',
+      true,
+    )
+  }
+  if (message.includes('another open correction batch already targets')) {
+    return new ShipmentReviewApiError(
+      '同じ出荷日を対象にした未完了の訂正バッチが既にあります。そのバッチを完了するか破棄してから登録してください。',
+      'conflict',
+      false,
+    )
+  }
+  if (message.includes('must have active version')) {
+    return new ShipmentReviewApiError(
+      '訂正bundleの版が、対象日の現在の版の次の版になっていません。bundleを作り直してください。',
+      'conflict',
+      false,
+    )
+  }
   if (message.includes('SHIPMENT_REVIEW_CONFLICT')) {
     return new ShipmentReviewApiError('別の操作で状態が更新されました。最新状態を再読み込みしてください。', 'conflict', true)
+  }
+  if (message.includes('the current correction diff has not been approved')) {
+    return new ShipmentReviewApiError(
+      '前版との差分が未承認か、承認した後に内容が変わりました。「前版との差分」を確認して承認してから反映してください。',
+      'not_ready',
+      false,
+    )
+  }
+  if (message.includes('every row must be approved or withdrawn before the diff is approved')) {
+    return new ShipmentReviewApiError('全行を承認または登録取下にしてから差分を承認してください。', 'not_ready', false)
+  }
+  if (message.includes('a correction cannot remove every line of a day')) {
+    return new ShipmentReviewApiError(
+      'ある出荷日の明細をすべて取り下げる訂正には対応していません。少なくとも1行を承認してください。',
+      'not_ready',
+      false,
+    )
   }
   if (message.includes('SHIPMENT_REVIEW_NOT_READY')) {
     return new ShipmentReviewApiError(
@@ -258,6 +399,14 @@ function apiError(error: BackendError): ShipmentReviewApiError {
   }
   if (message.includes('SHIPMENT_REVIEW_REFERENCE_NOT_FOUND')) {
     return new ShipmentReviewApiError('参照先の品目・単位・市場が見つかりません。', 'reference_missing', false)
+  }
+  if (message.includes('a reason is required to return a carried-over row to review')
+    || message.includes('a reason is required to re-approve a carried-over row')) {
+    return new ShipmentReviewApiError(
+      '前版から引き継いだ行（本番の明細）を変更するには、判断理由を入力してください。',
+      'invalid',
+      false,
+    )
   }
   if (message.includes('SHIPMENT_REVIEW_INVALID_PAYLOAD')) {
     return new ShipmentReviewApiError('入力データの形式が正しくありません。', 'invalid', false)
@@ -291,10 +440,16 @@ export function createShipmentReviewApi(client: ShipmentReviewBackend) {
       return requireObject<{ is_enabled?: unknown }>(data, 'feature flag').is_enabled === true
     },
 
+    // A bundle with a "correction" object is a correction bundle (ADR008): it replaces the active
+    // versions of its target days and is registered through its own RPC.
     async importBundle(bundle: unknown) {
-      requireObject(bundle, 'レビューbundle')
-      return requireObject<{ import_batch_id: string; created: boolean }>(
-        await rpc('import_shipment_review_bundle', { p_bundle: bundle }),
+      const value = requireObject<Record<string, unknown>>(bundle, 'レビューbundle')
+      const isCorrection = Boolean(value.correction) && typeof value.correction === 'object'
+      return requireObject<{ import_batch_id: string; created: boolean; batch_kind?: ShipmentReviewBatchKind }>(
+        await rpc(
+          isCorrection ? 'import_shipment_correction_bundle' : 'import_shipment_review_bundle',
+          { p_bundle: bundle },
+        ),
         'bundle登録',
       )
     },
@@ -318,6 +473,24 @@ export function createShipmentReviewApi(client: ShipmentReviewBackend) {
       return requireObject<{ row_status: ShipmentReviewRowStatus; duplicate: boolean }>(
         await rpc('apply_shipment_review_action', { p_action: action }),
         'レビュー操作',
+      )
+    },
+
+    async getCorrectionDiff(importBatchId: string): Promise<ShipmentCorrectionDiffResult> {
+      return requireObject<ShipmentCorrectionDiffResult>(
+        await rpc('get_shipment_correction_diff', { p_import_batch_id: importBatchId }),
+        '前版との差分',
+      )
+    },
+
+    async approveCorrectionDiff(importBatchId: string, diffSha256: string, notes?: string) {
+      return requireObject<{ diff_sha256: string }>(
+        await rpc('approve_shipment_correction_diff', {
+          p_import_batch_id: importBatchId,
+          p_diff_sha256: diffSha256,
+          p_notes: notes?.trim() || null,
+        }),
+        '差分の承認',
       )
     },
 

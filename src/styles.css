@@ -878,6 +878,28 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .review-reference-caption { margin: 0; color: #714d16; font-size: 0.7rem; line-height: 1.6; }
 .review-reference-caption strong { color: #8b342b; }
+.source-row-rail-list button.carried { border-style: dashed; }
+.review-origin-badge { margin: 6px 0 0; padding: 6px 10px; border-radius: 8px; font-size: 0.72rem; line-height: 1.6; }
+.review-origin-badge.carried { color: #2b4d6b; background: #e6eff7; border: 1px dashed #9db8cf; }
+.review-origin-badge.rereview { color: #714d16; background: #fff8e8; border: 1px solid #e1bd7f; }
+.correction-diff-panel { margin-bottom: 14px; }
+.correction-diff-approval { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.correction-diff-badge { padding: 5px 10px; border-radius: 99px; font-size: 0.7rem; font-weight: 700; color: #795319; background: #fff0c9; }
+.correction-diff-badge.approved { color: #25553e; background: #e2f1e7; }
+.correction-diff-badge.stale { color: #8b342b; background: #f8dfda; }
+.correction-diff-blockers { margin: 8px 0; padding-left: 1.2em; color: #8b342b; font-size: 0.75rem; line-height: 1.6; }
+.correction-diff-day { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.correction-diff-day h3 { display: flex; gap: 8px; align-items: baseline; margin: 0; font-size: 0.9rem; }
+.correction-diff-day h3 small { color: var(--ink-muted); font-weight: 500; }
+.correction-diff-totals { margin: 4px 0 6px; color: var(--ink-muted); font-size: 0.72rem; }
+.correction-diff-group { margin-top: 6px; font-size: 0.75rem; }
+.correction-diff-group ul { margin: 4px 0 0; padding-left: 1.2em; line-height: 1.7; }
+.correction-diff-group li small { margin-left: 8px; color: var(--ink-muted); }
+.correction-diff-group li span { display: block; color: #714d16; }
+.correction-diff-group.added strong { color: #25553e; }
+.correction-diff-group.changed strong { color: #714d16; }
+.correction-diff-group.removed strong,
+.correction-diff-group.excluded strong { color: #8b342b; }
 .review-reference-loading,
 .review-reference-empty { color: var(--ink-muted); font-size: 0.72rem; }
 .review-reference-chip {

@@ -7,10 +7,12 @@ import {
   createShipmentReviewRequestId,
   getShipmentReviewApi,
   initialShipmentReviewObservation,
+  isCarriedOverShipmentReviewRow,
   primaryShipmentReviewObservation,
   shipmentReviewDecisionAdvances,
 } from '../lib/shipmentReviewClient'
 import type {
+  ShipmentCorrectionDiffResult,
   ShipmentReviewAction,
   ShipmentReviewBatch,
   ShipmentReviewBatchSummary,
@@ -22,6 +24,13 @@ import type {
   TaxAdjustedSalesMatch,
   TaxAdjustedSalesReference,
 } from '../lib/shipmentReviewClient'
+import {
+  correctionDiffState,
+  correctionFieldLabel,
+  formatCorrectionLine,
+  formatCorrectionSource,
+  formatCorrectionValue,
+} from '../lib/shipmentCorrection'
 import { completeShipmentContentUnit, sourcePageNumber } from '../lib/shipmentReview'
 import { shipmentReviewPhysicalRow } from '../lib/shipmentReviewImageRows'
 import { mergeSourceImageUrls } from '../lib/shipmentReviewImages'
@@ -261,6 +270,8 @@ export function ShipmentReviewDb() {
   const [operation, setOperation] = useState<OperationState>({ kind: 'idle', message: '', retryable: false })
   const [taxAdjustedReference, setTaxAdjustedReference] = useState<TaxAdjustedSalesReference | null>(null)
   const [taxAdjustedReferenceError, setTaxAdjustedReferenceError] = useState(false)
+  const [correctionDiff, setCorrectionDiff] = useState<ShipmentCorrectionDiffResult | null>(null)
+  const [correctionDiffError, setCorrectionDiffError] = useState(false)
   const imageScrollRef = useRef<HTMLDivElement>(null)
   const sourceImageRef = useRef<HTMLImageElement>(null)
   const rowRailRef = useRef<HTMLDivElement>(null)
@@ -353,11 +364,16 @@ export function ShipmentReviewDb() {
     issue.code === 'tax_adjusted_price_match_candidate' && issue.field_name === 'unit_price_yen'
   )) ?? null
   const isBusy = operation.kind === 'saving'
+  const isCorrectionBatch = batch?.batch_kind === 'correction'
+  const correctionState = correctionDiffState(correctionDiff)
+  const currentRowIsCarried = currentRow ? isCarriedOverShipmentReviewRow(currentRow) : false
   const canFinalize = Boolean(batch)
     && !batch?.finalized_at
     && canFinalizeShipmentReview(rows)
     && rows.some((row) => row.row_status === 'approved')
     && rows.every((row) => row.row_status === 'approved' || row.row_status === 'no_shipment')
+    // ADR008: a correction is finalized only after a person approved exactly the current diff.
+    && (!isCorrectionBatch || correctionState.approvalCurrent)
   const pageImageUrl = currentRow ? imageUrls[currentRow.source_page] : undefined
   const currentPhysicalRow = currentRow
     ? shipmentReviewPhysicalRow(currentRow.source_page, currentRow.source_row)
@@ -371,6 +387,8 @@ export function ShipmentReviewDb() {
     ? rows.filter((row) => (
         valueText(displayedObservation(row, 'product')?.normalized_value).trim() === currentStoredProduct
         && row.row_status !== 'no_shipment'
+        // Carried-over rows are production lines; each change needs its own reason.
+        && !isCarriedOverShipmentReviewRow(row)
       ))
     : []
 
@@ -386,6 +404,19 @@ export function ShipmentReviewDb() {
       .catch(() => { if (active) setTaxAdjustedReferenceError(true) })
     return () => { active = false }
   }, [openTaxAdjustedPriceIssue?.shipment_review_issue_id, currentRow])
+
+  // The diff is recomputed by the database from the current rows, so it is reloaded whenever the batch
+  // detail is refreshed after an action.
+  useEffect(() => {
+    setCorrectionDiff(null)
+    setCorrectionDiffError(false)
+    if (!batch || batch.batch_kind !== 'correction') return
+    let active = true
+    getShipmentReviewApi().getCorrectionDiff(batch.import_batch_id)
+      .then((result) => { if (active) setCorrectionDiff(result) })
+      .catch(() => { if (active) setCorrectionDiffError(true) })
+    return () => { active = false }
+  }, [batch])
 
   function focusCurrentImageRow(smooth: boolean) {
     const scroller = imageScrollRef.current
@@ -476,8 +507,21 @@ export function ShipmentReviewDb() {
         shipment_review_row_id: row.shipment_review_row_id,
         expected_row_status: row.row_status,
         action_type: 'return_to_review',
+        notes: isCarriedOverShipmentReviewRow(row) ? decisionReason.trim() || undefined : undefined,
       })
     }
+  }
+
+  // Carried-over rows are copies of production lines: returning one to review, re-approving it, or
+  // withdrawing it needs a reason (public.apply_shipment_review_action, ADR008).
+  function carriedRowReasonMissing(row: ShipmentReviewDbRow) {
+    if (!isCarriedOverShipmentReviewRow(row) || decisionReason.trim()) return false
+    setOperation({
+      kind: 'error',
+      message: '前版から引き継いだ行（本番の明細）を変更するには、判断理由を入力してください。',
+      retryable: false,
+    })
+    return true
   }
 
   function inferMissingDraftUnit(value: Draft): Draft {
@@ -523,6 +567,7 @@ export function ShipmentReviewDb() {
 
   async function confirmFields() {
     if (!currentRow || !draft || !batch) return
+    if (carriedRowReasonMissing(currentRow)) return
     setOperation({ kind: 'saving', message: '入力値を監査履歴へ保存しています…', retryable: false })
     try {
       const completedDraft = inferMissingDraftUnit(draft)
@@ -537,6 +582,7 @@ export function ShipmentReviewDb() {
 
   async function actOnCandidate(observation: ShipmentReviewObservation, accepted: boolean) {
     if (!currentRow || !batch) return
+    if (carriedRowReasonMissing(currentRow)) return
     setOperation({ kind: 'saving', message: '候補の判断を保存しています…', retryable: false })
     try {
       await prepareRow(currentRow)
@@ -562,6 +608,7 @@ export function ShipmentReviewDb() {
   // step to call here, and public.apply_shipment_review_action now rejects one for this issue anyway.
   async function adoptTaxAdjustedSalesPrice(match: TaxAdjustedSalesMatch) {
     if (!currentRow || !batch || !draft || !openTaxAdjustedPriceIssue) return
+    if (carriedRowReasonMissing(currentRow)) return
     const issueId = openTaxAdjustedPriceIssue.shipment_review_issue_id
     const nextDraft = { ...draft, unit_price_yen: String(match.sales_unit_price_yen) }
     setDraft(nextDraft)
@@ -585,6 +632,7 @@ export function ShipmentReviewDb() {
 
   async function closeIssue(issue: ShipmentReviewIssue) {
     if (!currentRow || !batch || !draft) return
+    if (carriedRowReasonMissing(currentRow)) return
     setOperation({ kind: 'saving', message: '警告の処理結果を保存しています…', retryable: false })
     try {
       const completedDraft = inferMissingDraftUnit(draft)
@@ -665,6 +713,7 @@ export function ShipmentReviewDb() {
       setOperation({ kind: 'error', message: 'この判断には理由を入力してください。', retryable: false })
       return
     }
+    if (carriedRowReasonMissing(currentRow)) return
     setOperation({ kind: 'saving', message: '行の判断を保存しています…', retryable: false })
     try {
       const nextRowId = shipmentReviewDecisionAdvances(actionType)
@@ -692,6 +741,19 @@ export function ShipmentReviewDb() {
           : '行の判断をDBへ保存しました。',
         retryable: false,
       })
+    } catch (error) {
+      setOperation(errorState(error))
+    }
+  }
+
+  async function approveCorrectionDiff() {
+    if (!batch || !correctionDiff) return
+    if (!window.confirm('表示している前版との差分を承認しますか？\n承認後に行を変更した場合は、もう一度承認が必要です。')) return
+    setOperation({ kind: 'saving', message: '前版との差分を承認しています…', retryable: false })
+    try {
+      await getShipmentReviewApi().approveCorrectionDiff(batch.import_batch_id, correctionDiff.diff_sha256)
+      await refreshBatch(batch.import_batch_id, currentRow?.shipment_review_row_id)
+      setOperation({ kind: 'success', message: '差分を承認しました。本番反映できます。', retryable: false })
     } catch (error) {
       setOperation(errorState(error))
     }
@@ -739,7 +801,7 @@ export function ShipmentReviewDb() {
               <option value="">選択してください</option>
               {batches.map((item) => (
                 <option key={item.import_batch_id} value={item.import_batch_id}>
-                  {item.source_month.slice(0, 7)} v{item.report_version}・{item.pending_count ? `未完了${item.pending_count}行` : item.finalized_at ? '反映済み' : '判断済み'}
+                  {item.source_month.slice(0, 7)} v{item.report_version}{item.batch_kind === 'correction' ? '（訂正）' : ''}・{item.pending_count ? `未完了${item.pending_count}行` : item.finalized_at ? '反映済み' : '判断済み'}
                 </option>
               ))}
             </select>
@@ -764,7 +826,7 @@ export function ShipmentReviewDb() {
             <div className="approved"><strong>{counts.approved}</strong><span>承認済み</span></div>
             <div className="held"><strong>{counts.deferred}</strong><span>保留</span></div>
             <div className="excluded"><strong>{counts.no_shipment}</strong><span>登録取下</span></div>
-            <div className="review-progress-note"><p>v{batch.report_version} / {batch.source_month.slice(0, 7)}</p><small>DBを正本として保存</small></div>
+            <div className="review-progress-note"><p>v{batch.report_version} / {batch.source_month.slice(0, 7)}{isCorrectionBatch ? '・訂正' : ''}</p><small>{isCorrectionBatch ? `訂正理由：${batch.correction_reason ?? '—'}` : 'DBを正本として保存'}</small></div>
           </section>
 
           <div className="review-page-bar">
@@ -778,12 +840,42 @@ export function ShipmentReviewDb() {
               })}
             </nav>
             <div className={`review-batch-actions${canFinalize ? ' ready' : ''}`}>
-              <span>{batch.finalized_at ? '本番反映済み' : canFinalize ? '反映準備完了' : '全行判断後に反映'}</span>
+              <span>{batch.finalized_at ? '本番反映済み' : canFinalize ? '反映準備完了' : isCorrectionBatch ? '全行判断・差分承認後に反映' : '全行判断後に反映'}</span>
               <button className="secondary-button compact" type="button" disabled={isBusy} onClick={() => downloadAuditCsv(rows)}>監査CSV</button>
               <button className="secondary-button compact" type="button" disabled={isBusy} onClick={() => downloadAuditSnapshot(batch)}>完全監査JSON</button>
               <button className="primary-button compact" type="button" disabled={!canFinalize || isBusy} onClick={() => void finalizeBatch()}>本番反映</button>
             </div>
           </div>
+
+          {isCorrectionBatch && (
+            <section className="panel correction-diff-panel" aria-label="前版との差分">
+              <div className="panel-heading"><div><p className="section-kicker">CORRECTION DIFF</p><h2>前版との差分</h2></div>
+                <div className="correction-diff-approval">
+                  {batch.finalized_at ? <span className="correction-diff-badge approved">反映済み</span>
+                    : correctionState.approvalCurrent ? <span className="correction-diff-badge approved">この差分は承認済み</span>
+                      : correctionDiff?.latest_approval ? <span className="correction-diff-badge stale">承認後に内容が変わりました（再承認が必要）</span>
+                        : <span className="correction-diff-badge">未承認</span>}
+                  {!batch.finalized_at && <button className="primary-button compact" type="button" disabled={isBusy || !correctionState.canApprove || correctionState.approvalCurrent} onClick={() => void approveCorrectionDiff()}>この差分を承認</button>}
+                </div>
+              </div>
+              <p className="muted">本番の現在の版を、この訂正バッチの内容で日ごとに置き換えます。救済だけが目的の訂正では、期待される差分は「追加」だけです。</p>
+              {correctionDiffError ? <p className="review-reference-caption">差分を取得できませんでした。最新状態を再読込してください。</p>
+                : !correctionDiff ? <p className="review-reference-caption">差分を計算しています…</p>
+                  : <>
+                    {correctionState.blockers.length > 0 && !batch.finalized_at && <ul className="correction-diff-blockers">{correctionState.blockers.map((blocker) => <li key={blocker}>{blocker}</li>)}</ul>}
+                    {correctionDiff.diff.days.map((day) => (
+                      <div className="correction-diff-day" key={`${day.market_code}-${day.shipment_date}`}>
+                        <h3>{day.shipment_date}・{day.market_code}<small>v{day.active_report_version ?? '?'} → v{correctionDiff.diff.report_version}</small></h3>
+                        <p className="correction-diff-totals">明細 {day.before.line_count} → {day.after.line_count}行・数量 {day.before.package_quantity} → {day.after.package_quantity}・金額 {day.before.amount_yen.toLocaleString('ja-JP')} → {day.after.amount_yen.toLocaleString('ja-JP')}円・変更なし {day.unchanged_count}行</p>
+                        {day.added.length > 0 && <div className="correction-diff-group added"><strong>追加 {day.added.length}行</strong><ul>{day.added.map((line) => <li key={line.shipment_review_row_id}>{formatCorrectionLine(line)}<small>{formatCorrectionSource(line)}</small></li>)}</ul></div>}
+                        {day.changed.length > 0 && <div className="correction-diff-group changed"><strong>変更 {day.changed.length}行</strong><ul>{day.changed.map((change) => <li key={change.shipment_line_id}>{formatCorrectionLine(change.after)}<small>{formatCorrectionSource(change.before)}</small><span>{(change.changed_fields ?? []).map((field) => `${correctionFieldLabel(field)}：${formatCorrectionValue(field, change.before[field as keyof typeof change.before])} → ${formatCorrectionValue(field, change.after[field as keyof typeof change.after])}`).join('、')}</span></li>)}</ul></div>}
+                        {day.removed.length > 0 && <div className="correction-diff-group removed"><strong>削除 {day.removed.length}行</strong><ul>{day.removed.map((line) => <li key={line.shipment_line_id}>{formatCorrectionLine(line)}<small>{formatCorrectionSource(line)}</small><span>理由：{line.reason ?? '—'}</span></li>)}</ul></div>}
+                      </div>
+                    ))}
+                    {correctionDiff.diff.excluded_target_rows.length > 0 && <div className="correction-diff-group excluded"><strong>取り込まない対象行 {correctionDiff.diff.excluded_target_rows.length}行</strong><ul>{correctionDiff.diff.excluded_target_rows.map((row) => <li key={row.shipment_review_row_id}>{row.shipment_date} {row.source_page} {row.source_row}行目・{statusLabels[row.row_status]}<span>理由：{row.reason ?? '—'}</span></li>)}</ul></div>}
+                  </>}
+            </section>
+          )}
 
           <div className="shipment-review-workspace">
             <section className="panel source-image-panel">
@@ -797,11 +889,11 @@ export function ShipmentReviewDb() {
                     <div className="source-row-rail-list" ref={rowRailRef}>
                       {pageRows.map(({ row, index }) => (
                         <button
-                          className={`${index === currentIndex ? 'is-current' : ''} ${row.row_status}`}
+                          className={`${index === currentIndex ? 'is-current' : ''} ${row.row_status}${isCarriedOverShipmentReviewRow(row) ? ' carried' : ''}`}
                           type="button"
                           key={row.shipment_review_row_id}
                           aria-current={index === currentIndex ? 'true' : undefined}
-                          title={`${row.source_row}行目・${statusLabels[row.row_status]}`}
+                          title={`${row.source_row}行目・${statusLabels[row.row_status]}${isCarriedOverShipmentReviewRow(row) ? '・前版から引継ぎ' : ''}`}
                           onClick={() => setCurrentIndex(index)}
                         >
                           {row.source_row}
@@ -823,6 +915,8 @@ export function ShipmentReviewDb() {
                 <div className="review-row-heading"><div><p className="section-kicker">ROW {currentRow.source_row}</p><h2>{draft.product || '品目名未入力'}</h2></div>
                   <span className={`review-status ${currentRow.row_status}`}>{statusLabels[currentRow.row_status]}</span>
                 </div>
+                {currentRowIsCarried && <p className="review-origin-badge carried">前版から引継ぎ：本番に取り込み済みの明細を写した行です。変更・取下には判断理由が必要です。</p>}
+                {currentRow.carried_from_review_row_id && <p className="review-origin-badge rereview">以前のバッチで取下・保留した行の再確認です。</p>}
                 <div className="review-row-toolbar">
                   <button className="text-link-button" type="button" disabled={currentIndex === 0} onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))}>前の行</button>
                   <strong>{currentIndex + 1} / {rows.length}</strong>
@@ -882,7 +976,7 @@ export function ShipmentReviewDb() {
 
                 <details className="review-history"><summary>操作履歴（{currentRow.actions.length}件）</summary>{currentRow.actions.length ? <ol>{currentRow.actions.map((action) => <li key={action.shipment_review_action_id}><time>{new Date(action.acted_at).toLocaleString('ja-JP')}</time> {action.action_type}{action.notes ? ` — ${action.notes}` : ''}</li>)}</ol> : <p>操作履歴はまだありません。</p>}</details>
                 <div className="review-action-dock">
-                  <label className="review-decision-reason">判断理由・コメント<input type="text" value={decisionReason} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDecisionReason(event.target.value)} placeholder="保留・登録取下・差し戻しでは必須" /></label>
+                  <label className="review-decision-reason">判断理由・コメント<input type="text" value={decisionReason} disabled={isBusy || Boolean(batch.finalized_at)} onChange={(event) => setDecisionReason(event.target.value)} placeholder={currentRowIsCarried ? '引継ぎ行の変更・承認し直し・取下では必須' : '保留・登録取下・差し戻しでは必須'} /></label>
                   <div className="review-action-buttons"><button className="secondary-button review-confirm-fields" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void confirmFields()}>入力を保存</button><button className="primary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('approve')}>承認</button><button className="secondary-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('defer')}>保留</button><button className="danger-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('mark_no_shipment')}>登録取下</button><button className="text-link-button" type="button" disabled={isBusy || Boolean(batch.finalized_at)} onClick={() => void decide('reject_row')}>差し戻し</button></div>
                 </div>
               </div>

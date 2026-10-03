@@ -6,6 +6,7 @@ import {
   canFinalizeShipmentReview,
   createShipmentReviewApi,
   initialShipmentReviewObservation,
+  isCarriedOverShipmentReviewRow,
   primaryShipmentReviewObservation,
   shipmentReviewDecisionAdvances,
   type ShipmentReviewBackend,
@@ -191,6 +192,49 @@ describe('shipment review API client', () => {
       expect(error).toBeInstanceOf(ShipmentReviewApiError)
       expect(error).toMatchObject({ kind, retryable })
     }
+  })
+
+  it('registers a bundle with a correction section through the correction RPC', async () => {
+    const mock = backend({ rpc: { import_batch_id: 'batch-2', created: true, batch_kind: 'correction' } })
+    const api = createShipmentReviewApi(mock.client)
+    const bundle = { schema_version: 1, correction: { targets: [], reason: 'rescue' } }
+    await api.importBundle(bundle)
+    expect(mock.rpc).toHaveBeenCalledWith('import_shipment_correction_bundle', { p_bundle: bundle })
+  })
+
+  it('reads and approves a correction diff with the displayed hash', async () => {
+    const diff = backend({ rpc: { diff: {}, diff_sha256: 'a'.repeat(64), latest_approval: null } })
+    await createShipmentReviewApi(diff.client).getCorrectionDiff('batch-2')
+    expect(diff.rpc).toHaveBeenCalledWith('get_shipment_correction_diff', { p_import_batch_id: 'batch-2' })
+
+    const approve = backend({ rpc: { diff_sha256: 'a'.repeat(64) } })
+    await createShipmentReviewApi(approve.client).approveCorrectionDiff('batch-2', 'a'.repeat(64), '  ')
+    expect(approve.rpc).toHaveBeenCalledWith('approve_shipment_correction_diff', {
+      p_import_batch_id: 'batch-2',
+      p_diff_sha256: 'a'.repeat(64),
+      p_notes: null,
+    })
+  })
+
+  it('explains correction-specific failures instead of the generic warning message', async () => {
+    for (const [message, expected, kind] of [
+      ['SHIPMENT_REVIEW_NOT_READY: the current correction diff has not been approved.', '前版との差分が未承認', 'not_ready'],
+      ['SHIPMENT_REVIEW_CONFLICT: the diff changed after it was displayed; review it again.', '表示した後に差分が変わりました', 'conflict'],
+      ['SHIPMENT_REVIEW_INVALID_PAYLOAD: a reason is required to return a carried-over row to review.', '判断理由を入力してください', 'invalid'],
+      ['SHIPMENT_REVIEW_NOT_READY: a correction cannot remove every line of a day.', 'すべて取り下げる訂正', 'not_ready'],
+      ['SHIPMENT_REVIEW_CONFLICT: another open correction batch already targets 2026-05-04.', '未完了の訂正バッチ', 'conflict'],
+    ] as const) {
+      const mock = backend({ rpcError: { message } })
+      const error = await createShipmentReviewApi(mock.client).listBatches().catch((caught) => caught)
+      expect(error).toMatchObject({ kind })
+      expect(error.message).toContain(expected)
+    }
+  })
+
+  it('identifies carried-over rows by their production line', () => {
+    expect(isCarriedOverShipmentReviewRow({ carried_from_shipment_line_id: 'line-1' })).toBe(true)
+    expect(isCarriedOverShipmentReviewRow({ carried_from_shipment_line_id: null })).toBe(false)
+    expect(isCarriedOverShipmentReviewRow({})).toBe(false)
   })
 
   it('calls list, detail, and finalization RPCs with their declared arguments', async () => {
