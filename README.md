@@ -31,7 +31,7 @@ npm run dev
 - `analytics.daily_product_shipment_balances`
 - `analytics.daily_product_market_prices`
 
-`admin`または`inputter`には「データ登録」が表示されます。対象年を選択して売上状況を貼り付けると、合計と商品対応を確認した後、`public.import_sales_blocks` RPCでトランザクション登録します。ブラウザからSecret Keyや`service_role`は使用しません。
+`admin`または`inputter`には、ヘッダーに「販売登録」が表示されます。対象年を選択して売上状況を貼り付けると、合計と商品対応を確認した後、`public.import_sales_blocks` RPCでトランザクション登録します。ブラウザからSecret Keyや`service_role`は使用しません。
 
 認証画面はLINEログインを標準とし、既存のメール・パスワード認証は管理者用の予備手段として残しています。初回のLINEログイン直後はデータへアクセスできず、画面に表示された確認コードを管理者が承認すると利用可能になります。
 
@@ -51,9 +51,9 @@ Supabase AuthにはIdentifierが`custom:line-oauth`のCustom OAuth2 Provider（M
 
 DBマイグレーションと初回市況同期を完了してから、このフロントエンドをデプロイしてください。未適用のまま公開すると、商品別画面が`analytics.daily_product_market_prices`を取得できません。詳細な適用順序、28品目の対応一覧、追加方法、検証、障害対応は、非公開データプラットフォームの`docs/market_price_integration.md`を参照してください。
 
-## 出荷確認
+## 出荷登録（出荷確認画面）
 
-`shipment_input` feature flagが有効で、`admin`または`inputter`としてログインしている場合、ヘッダーの「出荷確認」から `#/shipments/review` を開けます。非公開データプラットフォームで生成したレビューbundleをSupabaseへ登録し、確認状態と監査履歴をDBへ保存します。
+`shipment_input` feature flagが有効で、`admin`または`inputter`としてログインしている場合、ヘッダーの「出荷登録」から出荷確認画面（`#/shipments/review`）を開けます。非公開データプラットフォームで生成したレビューbundleをSupabaseへ登録し、確認状態と監査履歴をDBへ保存します。
 
 - bundleに含まれる転記値、警告、修正候補を原画像と照合する
 - 候補の採用・却下、手修正、警告の許容・解決を操作履歴へ記録する

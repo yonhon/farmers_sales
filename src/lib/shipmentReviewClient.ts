@@ -279,6 +279,45 @@ export type ShipmentCorrectionDiffResult = {
   } | null
 }
 
+// public.get_shipment_review_batch_verification: the preflight/postflight check of one batch, with the
+// same columns as supabase/verify_shipment_review_production_batch.sql. The batch columns are null
+// when the batch does not exist.
+export type ShipmentReviewBatchVerification = {
+  verification_phase: 'target_not_found' | 'preflight' | 'postflight'
+  import_batch_id: string | null
+  bundle_sha256: string | null
+  source_month: string | null
+  report_version: number | null
+  finalized_at: string | null
+  abandoned_at: string | null
+  import_status: string | null
+  total_rows: number
+  approved_rows: number
+  no_shipment_rows: number
+  unfinished_rows: number
+  invalid_accepted_field_count: number
+  blocking_issue_count: number
+  expected_report_count: number
+  linked_report_count: number
+  linked_line_count: number
+  approved_unlinked_rows: number
+  no_shipment_linked_rows: number
+  expected_package_quantity: number
+  imported_package_quantity: number
+  imported_amount_yen: number
+  recorded_report_count: number | null
+  recorded_line_count: number | null
+  completion_audit_event_count: number
+  current_allocation_rows: number
+  current_unmatched_sales_quantity: number
+  finalization_result: Record<string, unknown> | null
+  month_active_report_count: number
+  month_active_line_count: number
+  month_other_open_batch_count: number
+  ready_to_finalize: boolean
+  postflight_pass: boolean
+}
+
 export function canFinalizeShipmentReview(
   rows: Array<Pick<ShipmentReviewDbRow, 'row_status'>>,
 ) {
@@ -544,6 +583,13 @@ export function createShipmentReviewApi(client: ShipmentReviewBackend) {
 
     // Evidence for an open tax_adjusted_price_match_candidate issue: the actual sales-side price(s)
     // that only matched the row's accepted unit price through the tax-exclusive rounding.
+    async getBatchVerification(importBatchId: string): Promise<ShipmentReviewBatchVerification> {
+      return requireObject<ShipmentReviewBatchVerification>(
+        await rpc('get_shipment_review_batch_verification', { p_import_batch_id: importBatchId }),
+        '検証結果',
+      )
+    },
+
     async taxAdjustedSalesReference(shipmentReviewRowId: string) {
       return requireObject<TaxAdjustedSalesReference>(
         await rpc('shipment_review_tax_adjusted_sales_reference', {

@@ -263,15 +263,15 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
         <div className="user-actions">
           {appRole === 'admin' || appRole === 'inputter' ? (
             <>
-              {shipmentInputEnabled && <a className={`header-link${isShipmentReviewRoute ? ' is-active' : ''}`} href="#/shipments/review">出荷確認</a>}
+              {shipmentInputEnabled && <a className={`header-link${isShipmentReviewRoute ? ' is-active' : ''}`} href="#/shipments/review">出荷登録</a>}
               <a className={`header-link${isImportRoute ? ' is-active' : ''}`} href="#/sales/import">
-                データ登録
+                販売登録
               </a>
             </>
           ) : null}
           {appRole === 'admin' ? (
             <>
-              <a className={`header-link${isUserManagementRoute ? ' is-active' : ''}`} href="#/admin/users">ユーザー管理</a>
+              <a className={`header-link${isUserManagementRoute ? ' is-active' : ''}`} href="#/admin/users">ユーザー登録</a>
               <a className={`header-link${isUsageAdminRoute ? ' is-active' : ''}`} href="#/admin/usage">利用状況</a>
             </>
           ) : null}

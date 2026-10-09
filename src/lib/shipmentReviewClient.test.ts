@@ -269,5 +269,9 @@ describe('shipment review API client', () => {
     const finalize = backend({ rpc: { duplicate: false } })
     await createShipmentReviewApi(finalize.client).finalize('batch-1')
     expect(finalize.rpc).toHaveBeenCalledWith('finalize_shipment_review_batch', { p_import_batch_id: 'batch-1' })
+
+    const verification = backend({ rpc: { verification_phase: 'preflight' } })
+    await createShipmentReviewApi(verification.client).getBatchVerification('batch-1')
+    expect(verification.rpc).toHaveBeenCalledWith('get_shipment_review_batch_verification', { p_import_batch_id: 'batch-1' })
   })
 })

@@ -15,6 +15,7 @@ import type {
   ShipmentCorrectionDiffResult,
   ShipmentReviewAction,
   ShipmentReviewBatch,
+  ShipmentReviewBatchVerification,
   ShipmentReviewBatchSummary,
   ShipmentReviewDbRow,
   ShipmentReviewField,
@@ -44,6 +45,11 @@ import {
   serializeShipmentReviewSnapshot,
   shipmentReviewSnapshotFilename,
 } from '../lib/shipmentReviewSnapshot'
+import {
+  serializeShipmentReviewVerificationCsv,
+  shipmentReviewVerificationFilename,
+  summarizeShipmentReviewVerification,
+} from '../lib/shipmentReviewVerification'
 
 const selectedBatchStorageKey = 'shipment-review:selected-batch:v2'
 
@@ -264,6 +270,21 @@ function downloadAuditSnapshot(batch: ShipmentReviewBatch) {
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = shipmentReviewSnapshotFilename(batch)
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
+function downloadVerificationCsv(verification: ShipmentReviewBatchVerification) {
+  const blob = new Blob(
+    [serializeShipmentReviewVerificationCsv(verification)],
+    { type: 'text/csv;charset=utf-8' },
+  )
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = shipmentReviewVerificationFilename(verification)
   document.body.append(anchor)
   anchor.click()
   anchor.remove()
@@ -881,7 +902,37 @@ export function ShipmentReviewDb() {
     try {
       await getShipmentReviewApi().finalize(batch.import_batch_id)
       await refreshBatch(batch.import_batch_id, currentRow?.shipment_review_row_id)
-      setOperation({ kind: 'success', message: '本番反映が完了しました。再実行しても重複しません。', retryable: false })
+    } catch (error) {
+      setOperation(errorState(error))
+      return
+    }
+    const finalized = '本番反映が完了しました。再実行しても重複しません。'
+    // The postflight check runs right after the reflection so its result is on screen without
+    // another step. If it cannot be fetched, the reflection itself has still succeeded.
+    try {
+      const summary = summarizeShipmentReviewVerification(
+        await getShipmentReviewApi().getBatchVerification(batch.import_batch_id),
+      )
+      // A correction batch is judged by its diff and its own postflight (ADR008), not by this check.
+      setOperation(batch.batch_kind === 'correction'
+        ? { kind: 'success', message: finalized, retryable: false }
+        : { kind: summary.pass ? 'success' : 'error', message: `${finalized} ${summary.message}`, retryable: false })
+    } catch {
+      setOperation({ kind: 'success', message: `${finalized} 反映後の検証は取得できませんでした。「検証結果CSV」で取得してください。`, retryable: false })
+    }
+  }
+
+  // The preflight/postflight verification of this batch, saved as a file like the audit CSV.
+  async function exportVerification() {
+    if (!batch) return
+    setOperation({ kind: 'saving', message: '検証結果を取得しています…', retryable: false })
+    try {
+      const verification = await getShipmentReviewApi().getBatchVerification(batch.import_batch_id)
+      downloadVerificationCsv(verification)
+      const summary = summarizeShipmentReviewVerification(verification)
+      setOperation(batch.batch_kind === 'correction'
+        ? { kind: 'success', message: '検証結果CSVを保存しました。訂正バッチの合否は、前版との差分と取り込み後の検証で確認します。', retryable: false }
+        : { kind: summary.pass ? 'success' : 'error', message: summary.message, retryable: false })
     } catch (error) {
       setOperation(errorState(error))
     }
@@ -942,7 +993,7 @@ export function ShipmentReviewDb() {
             <div className="approved"><strong>{counts.approved}</strong><span>承認済み</span></div>
             <div className="held"><strong>{counts.deferred}</strong><span>保留</span></div>
             <div className="excluded"><strong>{counts.no_shipment}</strong><span>登録取下</span></div>
-            <div className="review-progress-note"><p>v{batch.report_version} / {batch.source_month.slice(0, 7)}{isCorrectionBatch ? '・訂正' : ''}</p><small>{isCorrectionBatch ? `訂正理由：${batch.correction_reason ?? '—'}` : 'DBを正本として保存'}</small></div>
+            <div className="review-progress-note"><p>v{batch.report_version} / {batch.source_month.slice(0, 7)}{isCorrectionBatch ? '・訂正' : ''}</p><small>{isCorrectionBatch ? `訂正理由：${batch.correction_reason ?? '—'}` : 'DBを正本として保存'}</small><small className="review-batch-identity">バッチID {batch.import_batch_id}{batch.bundle_sha256 ? `・bundle ${batch.bundle_sha256.slice(0, 8)}…` : ''}</small></div>
           </section>
 
           <div className="review-page-bar">
@@ -959,6 +1010,7 @@ export function ShipmentReviewDb() {
               <span>{batch.finalized_at ? '本番反映済み' : canFinalize ? '反映準備完了' : isCorrectionBatch ? '全行判断・差分承認後に反映' : '全行判断後に反映'}</span>
               <button className="secondary-button compact" type="button" disabled={isBusy} onClick={() => downloadAuditCsv(rows)}>監査CSV</button>
               <button className="secondary-button compact" type="button" disabled={isBusy} onClick={() => downloadAuditSnapshot(batch)}>完全監査JSON</button>
+              <button className="secondary-button compact" type="button" disabled={isBusy} onClick={() => void exportVerification()}>検証結果CSV</button>
               <button className="primary-button compact" type="button" disabled={!canFinalize || isBusy} onClick={() => void finalizeBatch()}>本番反映</button>
             </div>
           </div>

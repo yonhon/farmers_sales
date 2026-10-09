@@ -563,6 +563,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .review-progress > div.review-progress-note { align-content: center; border-right: 0; }
 .review-progress-note p { margin: 0; color: #8b5c13; font-size: 0.75rem; font-weight: 700; }
 .review-progress-note small { color: var(--ink-muted); font-size: 0.62rem; }
+.review-progress-note small.review-batch-identity { display: block; overflow-wrap: anywhere; user-select: all; }
 
 .review-page-bar { display: flex; align-items: stretch; gap: 10px; min-width: 0; }
 .review-page-tabs { display: flex; flex: 1 1 auto; min-width: 0; gap: 8px; overflow-x: auto; padding: 2px; }
