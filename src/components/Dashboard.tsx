@@ -18,6 +18,7 @@ import { buildSalesHashHref, parseHashRoute } from '../lib/routes'
 import type { HashRoute } from '../lib/routes'
 import { supabase } from '../lib/supabase'
 import { getShipmentReviewApi } from '../lib/shipmentReviewClient'
+import { downloadTableCsv, tableCsvFilename } from '../lib/tableCsv'
 import { recordUsageEvent } from '../lib/usageTracking'
 import type { DailyProductSalesRow, DailySalesRow } from '../types'
 import { ProductDetail } from './ProductDetail'
@@ -462,7 +463,27 @@ export function Dashboard({ userId, onSignOut }: DashboardProps) {
                   <p className="section-kicker">PRODUCT DETAIL</p>
                   <h2>商品別集計</h2>
                 </div>
-                <span className="record-count">{productSummary.length}商品</span>
+                <div className="panel-heading-actions">
+                  <span className="record-count">{productSummary.length}商品</span>
+                  <button
+                    className="secondary-button compact"
+                    type="button"
+                    disabled={sortedProductSummary.length === 0}
+                    onClick={() => downloadTableCsv(
+                      tableCsvFilename(['商品別集計', startDate, endDate]),
+                      ['商品名', '販売個数', '粗売上', '値引額', '純売上'],
+                      sortedProductSummary.map((product) => [
+                        product.canonicalName,
+                        product.soldQuantity,
+                        product.grossSalesYen,
+                        product.discountAmountYen,
+                        product.netSalesYen,
+                      ]),
+                    )}
+                  >
+                    CSV出力
+                  </button>
+                </div>
               </div>
               <div className="table-scroll">
                 <table>

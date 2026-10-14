@@ -33,6 +33,7 @@ import {
   summarizeProduct,
   summarizeWeightedKgPrices,
 } from '../lib/analytics'
+import { downloadTableCsv, tableCsvFilename } from '../lib/tableCsv'
 import { supabase } from '../lib/supabase'
 import type {
   DailyProductMarketPriceRow,
@@ -719,7 +720,28 @@ export function ProductDetail({
                 <p className="section-kicker">DAILY RECORDS</p>
                 <h2>日別明細</h2>
               </div>
-              <span className="record-count">{chartRows.length}日分</span>
+              <div className="panel-heading-actions">
+                <span className="record-count">{chartRows.length}日分</span>
+                <button
+                  className="secondary-button compact"
+                  type="button"
+                  disabled={chartRows.length === 0}
+                  onClick={() => downloadTableCsv(
+                    tableCsvFilename(['日別明細', productName, startDate, endDate]),
+                    ['日付', '販売個数', '粗売上', '値引額', '純売上', '平均実売単価'],
+                    chartRows.map((row) => [
+                      row.report_date,
+                      Number(row.sold_quantity),
+                      Number(row.gross_sales_yen),
+                      Number(row.discount_amount_yen),
+                      Number(row.net_sales_yen),
+                      row.average_unit_revenue_yen === null ? null : Math.round(row.average_unit_revenue_yen),
+                    ]),
+                  )}
+                >
+                  CSV出力
+                </button>
+              </div>
             </div>
             <div className="table-scroll">
               <table>
