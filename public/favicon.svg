@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 42 42">
+  <g transform="rotate(-6 19 19)">
+    <path fill="#d8b06c" d="M19 0A19 19 0 0 1 38 19A19 19 0 0 1 19 38H12A12 12 0 0 1 0 26V19A19 19 0 0 1 19 0Z" />
+    <text x="19" y="20" fill="#214f3d" font-family="'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', 'Meiryo', sans-serif" font-size="22" font-weight="700" text-anchor="middle" dominant-baseline="central">農</text>
+  </g>
+</svg>
